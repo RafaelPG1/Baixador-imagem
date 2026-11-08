@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Baixador de Imagens</title>
+<link rel="stylesheet" href="/estatico/base.css">
+</head>
+<body>
+<div id="offline" hidden>Sem conexão com o programa. Ele ainda está rodando no terminal?</div>
+<header class="topo">
+  <div class="topo-in">
+    <div class="marca"><span class="marca-sinal" aria-hidden="true">B</span> Baixador</div>
+    <nav class="abas" role="tablist" aria-label="Seções">
+      <button class="aba" role="tab" id="aba-baixar" data-pagina="baixar" aria-selected="true" aria-controls="pg-baixar">Baixar imagens</button>
+      <button class="aba" role="tab" id="aba-biblioteca" data-pagina="biblioteca" aria-selected="false" aria-controls="pg-biblioteca">Biblioteca</button>
+      <button class="aba" role="tab" id="aba-traducoes" data-pagina="traducoes" aria-selected="false" aria-controls="pg-traducoes">Traduções<span id="aba-trad-ponto" class="ponto" hidden aria-label="traduzindo agora"></span></button>
+      <button class="aba" role="tab" id="aba-celular" data-pagina="celular" aria-selected="false" aria-controls="pg-celular">Leitura pelo celular</button>
+    </nav>
+    <div class="topo-fim">
+      <span id="chip-celular" class="chip" title="Servidor do celular">Celular desligado</span>
+      <span id="estado" class="chip">Pronto</span>
+    </div>
+  </div>
+</header>
+
+<main>
+<!-- ============================================================ BAIXAR -->
+<section id="pg-baixar" class="pagina" role="tabpanel" aria-labelledby="aba-baixar">
+  <form id="formulario" class="secao" autocomplete="off">
+    <div class="secao-cab"><h2>1. Site e capítulo</h2><span class="suave">O número e o nome vêm da aba do site; corrija se precisar.</span></div>
+    <div class="grade-2">
+      <label class="campo"><span>Endereço do capítulo</span>
+        <input type="text" autocomplete="off" id="url" placeholder="https://exemplo.com/obra/capitulo-12" inputmode="url" spellcheck="false" required>
+      </label>
+      <label class="campo"><span>Obra</span>
+        <input type="text" autocomplete="off" id="obra" list="lista-obras" spellcheck="false" maxlength="80" placeholder="obra existente ou nova">
+        <datalist id="lista-obras"></datalist>
+      </label>
+      <label class="campo"><span>Capítulo nº</span>
+        <input type="text" autocomplete="off" id="cap-num" inputmode="decimal" maxlength="7" placeholder="ex.: 12">
+      </label>
+      <label class="campo"><span>Nome do capítulo <small>(opcional)</small></span>
+        <input type="text" autocomplete="off" id="cap-titulo" spellcheck="false" maxlength="80">
+      </label>
+    </div>
+    <p class="nota num" id="cap-previa"></p>
+    <div id="obra-aviso" class="nota" role="status" hidden></div>
+
+    <div class="secao-cab"><h2>2. Como baixar</h2></div>
+    <fieldset id="modos">
+      <legend class="sr">Como baixar</legend>
+      <label class="marcar"><input type="radio" name="modo" value="manual" checked> Escolher as imagens manualmente (recomendado)</label>
+      <label class="marcar"><input type="radio" name="modo" value="auto"> Baixar tudo automaticamente</label>
+    </fieldset>
+    <div id="opcoes-continuar" hidden class="secao">
+      <label class="marcar" title="Ligado: ao terminar um capítulo, clica em “próximo” e repete. Desligado: baixa só o capítulo atual."><input type="checkbox" id="continuar-auto"> Continuar baixando os próximos capítulos automaticamente</label>
+      <p class="nota" id="nota-continuar" hidden>Se não achar ou não conseguir baixar o próximo capítulo, o programa para onde está, deixa o navegador aberto e avisa. Ele nunca afirma que a obra acabou: pode ser o último capítulo ou um erro; confira no site.</p>
+      <label class="marcar" title="Só vale com “Continuar baixando os próximos capítulos automaticamente” ligado. A tradução começa quando os downloads terminarem, usando os idiomas escolhidos na Biblioteca."><input type="checkbox" id="traduzir-auto"> Traduzir automaticamente após concluir os downloads</label>
+      <p class="nota" id="nota-traduzir" hidden>A tradução só começa se “Continuar baixando os próximos capítulos automaticamente” também estiver ligado.</p>
+      <div id="opcao-atualizar" hidden>
+        <label class="marcar" title="Só aparece com as duas opções acima desligadas. Parte do último capítulo salvo da obra, pula o que já está na biblioteca e baixa só os mais recentes."><input type="checkbox" id="atualizar-auto"> Atualizar obra: baixar os capítulos mais recentes</label>
+        <p class="nota" id="nota-atualizar" hidden>Parte do último capítulo salvo da obra escolhida (campo “Obra”), pula o que já existe e baixa só os capítulos novos. Enquanto esta opção estiver ligada, as duas acima ficam bloqueadas; se a obra ainda não está na biblioteca, começa pelo endereço informado.</p>
+      </div>
+    </div>
+
+    <details>
+      <summary>Navegador e destino</summary>
+      <div class="secao" style="padding-top: 8px">
+        <div class="grade-2">
+          <label class="campo">Navegador <select id="navegador"></select></label>
+          <label class="campo">Perfil do navegador
+            <select id="perfil">
+              <option value="proprio" selected>Próprio do programa (guarda extensões e logins)</option>
+              <option value="temporario">Temporário (limpo, sem extensões)</option>
+            </select>
+          </label>
+          <label class="campo" id="campo-caminho" hidden>Caminho do programa (ex.: brave.exe)
+            <input type="text" id="caminho" spellcheck="false" placeholder="C:\Program Files\...\brave.exe">
+          </label>
+          <label class="campo"><span>Pasta de destino <small>(a Biblioteca mostra a pasta padrão)</small></span>
+            <input type="text" id="pasta" spellcheck="false">
+          </label>
+        </div>
+        <label class="marcar"><input type="checkbox" id="bloquear-abas" checked> Fechar sozinho abas novas que o site abrir (anúncios)</label>
+        <p class="nota">Para usar extensões e o bloqueador do Brave: abra o site com o perfil próprio e instale as extensões na janela, uma única vez. Seu perfil real do Brave não é usado.</p>
+      </div>
+    </details>
+
+    <div class="acoes">
+      <button type="submit" id="iniciar" class="btn principal grande">Abrir site no navegador</button>
+      <button type="button" id="fechar-nav" class="btn" disabled>Fechar navegador</button>
+      <button type="button" id="limpar-tudo" class="btn" title="Zera esta operação (endereço, obra, lista de imagens, andamento). Não apaga nada da biblioteca.">Limpar tudo</button>
+      <p id="mensagem" class="msg" role="alert"></p>
+    </div>
+  </form>
+
+  <section class="secao" id="secao-busca">
+    <div class="secao-cab"><h2>3. Procurar e baixar</h2></div>
+    <p id="instrucao"></p>
+    <div class="linha-form">
+      <label class="marcar">Busca
+        <select id="modo-busca" aria-label="Modo da busca" style="width: auto">
+          <option value="rapido" selected>Rápida e adaptativa (recomendada)</option>
+          <option value="carregamento">Cuidadosa: desce devagar e espera o “carregando” sumir</option>
+        </select>
+      </label>
+      <label class="marcar">Desistir após <input type="number" id="espera" min="5" max="300" value="30" aria-label="Segundos sem progresso para desistir"> s sem novidade</label>
+      <label class="marcar"><input type="checkbox" id="sem-comentarios" checked> Ignorar imagens de comentários</label>
+    </div>
+    <div class="acoes">
+      <button type="button" id="procurar" class="btn principal" disabled>Procurar imagens na página</button>
+      <button type="button" id="cancelar-busca" class="btn" disabled>Cancelar busca</button>
+      <button type="button" id="proximo-cap" class="btn" disabled title="Clica no botão de próximo capítulo do site e zera a lista">Passar para o próximo capítulo</button>
+      <span id="mensagem-busca" class="msg" role="alert"></span>
+    </div>
+  </section>
+
+  <section class="secao">
+    <div class="secao-cab"><h2>Imagens encontradas <span id="contagem-manual" class="num"></span></h2></div>
+    <div class="acoes">
+      <button type="button" id="marcar-tudo" class="btn pequeno">Marcar tudo</button>
+      <button type="button" id="marcar-nada" class="btn pequeno">Desmarcar tudo</button>
+      <button type="button" id="limpar-lista" class="btn pequeno">Limpar lista</button>
+      <span style="flex: 1"></span>
+      <span id="contagem-marcadas" class="nota num"></span>
+      <button type="button" id="baixar-marcadas" class="btn principal" disabled>Baixar marcadas</button>
+      <button type="button" id="abrir-pasta-manual" class="btn" hidden>Abrir pasta</button>
+      <button type="button" id="abrir-leitor-manual" class="btn" hidden>Ler o capítulo salvo</button>
+    </div>
+    <div id="galeria-manual" class="galeria"></div>
+    <div id="vazio-manual" class="vazio"><strong>Nenhuma imagem na lista</strong><span>Abra o site, deixe o capítulo aparecer e clique em “Procurar imagens na página”.</span></div>
+    <details id="falhas-manual" hidden><summary id="falhas-titulo"></summary><ul id="lista-falhas" class="nota"></ul></details>
+  </section>
+
+  <section class="secao">
+    <div class="secao-cab"><h2>Andamento</h2></div>
+    <pre id="log-manual" class="registro" aria-live="polite"></pre>
+  </section>
+</section>
+
+<!-- ============================================================ BIBLIOTECA -->
+<section id="pg-biblioteca" class="pagina bib" role="tabpanel" aria-labelledby="aba-biblioteca" hidden>
+  <div class="bib-barra">
+    <h2 class="bib-titulo">Biblioteca <span id="bib-conta" class="suave num"></span></h2>
+    <label class="bib-busca">
+      <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      <input id="bib-filtro" type="search" placeholder="Buscar obra" aria-label="Buscar obra pelo nome" autocomplete="off" spellcheck="false">
+    </label>
+    <div class="bib-menu">
+      <button type="button" id="bib-tr-btn" class="btn" aria-expanded="false" aria-controls="bib-tr-painel"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 8 6 6"/><path d="m4 14 6-6 2-3"/><path d="M2 5h12"/><path d="M7 2h1"/><path d="m22 22-5-10-5 10"/><path d="M14 18h6"/></svg><span>Tradução</span><span id="bib-tr-resumo" class="suave"></span><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>
+      <div id="bib-tr-painel" class="bib-popover bib-popover-largo" hidden>
+        <div class="bib-campos">
+          <label class="campo">Traduzir de
+            <select id="trad-de"><option value="en" selected>Inglês</option><option value="es">Espanhol</option><option value="fr">Francês</option><option value="it">Italiano</option><option value="de">Alemão</option><option value="pt">Português</option></select>
+          </label>
+          <label class="campo">Para
+            <select id="trad-para" disabled title="O destino da tradução é sempre o português."><option value="pt" selected>Português</option></select>
+          </label>
+        </div>
+        <label class="campo">Motor
+          <select id="bib-motor" aria-label="Motor de tradução"></select>
+        </label>
+        <p id="bib-motor-status" class="nota" role="status"></p>
+        <div class="bib-pop-acoes">
+          <button type="button" id="trad-pendentes" class="btn principal">Traduzir tudo que falta</button>
+          <button type="button" id="bib-refinar" class="btn" disabled title="Melhora com o Hy-MT2 os capítulos já traduzidos pelo Argos">Refinar capítulos já traduzidos</button>
+        </div>
+        <div id="trad-aviso" class="faixa aviso" hidden>Falta instalar o recurso de tradução. No terminal, com o ambiente virtual ativado: pip install -r requirements-traducao.txt</div>
+      </div>
+    </div>
+    <div class="bib-menu">
+      <button type="button" id="bib-mais-btn" class="btn bib-icone" aria-expanded="false" aria-controls="bib-mais-painel" aria-label="Mais ações da biblioteca" title="Mais ações"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="19" cy="12" r="1.2"/></svg></button>
+      <div id="bib-mais-painel" class="bib-popover bib-popover-fim" hidden>
+        <button type="button" id="abrir-saida" class="bib-item"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg><span>Abrir pasta da biblioteca</span></button>
+        <hr>
+        <button type="button" id="excluir-tudo" class="bib-item perigo" title="Apaga TODAS as obras da biblioteca (pede confirmação)"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16"/><path d="M10 11v6M14 11v6"/><path d="M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12"/><path d="M9 7V4h6v3"/></svg><span>Excluir todas as obras</span></button>
+      </div>
+    </div>
+  </div>
+
+  <div id="bib-andamento" class="bib-andamento" hidden>
+    <div class="bib-and-linha">
+      <span id="bib-and-chip" class="chip ativo">Traduzindo</span>
+      <span id="trad-estado" class="bib-and-texto" role="status"></span>
+      <div class="tr-barra bib-and-barra" aria-hidden="true"><div id="bib-and-fill"></div></div>
+      <button type="button" id="bib-log-btn" class="btn pequeno" aria-expanded="false" aria-controls="log-traducao">Registro</button>
+      <button type="button" id="trad-cancelar" class="btn pequeno" hidden>Cancelar tradução</button>
+      <button type="button" id="bib-and-fechar" class="btn pequeno bib-icone" aria-label="Fechar aviso" hidden><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+    </div>
+    <pre id="log-traducao" class="registro" aria-live="polite" hidden></pre>
+  </div>
+
+  <div id="bib-linhas" class="linhas" aria-live="polite"></div>
+  <aside id="bib-detalhe" class="detalhe bib-painel" aria-label="Detalhes do capítulo" hidden></aside>
+</section>
+
+<!-- ============================================================ TRADUÇÕES -->
+<section id="pg-traducoes" class="pagina" role="tabpanel" aria-labelledby="aba-traducoes" hidden>
+  <div class="secao">
+    <div class="secao-cab"><h2>Traduções</h2><span class="suave">Acompanhe o que está sendo traduzido agora. Para começar uma tradução, use a Biblioteca ou a opção automática da aba Baixar.</span></div>
+    <fieldset class="tr-motor" id="tr-motor" aria-describedby="tr-motor-nota">
+      <legend>Motor de tradução</legend>
+      <div id="tr-motor-opcoes" class="tr-motor-opcoes"></div>
+      <p id="tr-motor-nota" class="nota">Vale para as próximas traduções; a que está em andamento termina com o motor com que começou. O Hy-MT2 roda no Ollama, neste computador. O Gemini usa a chave key_gemini e o OpenRouter a chave key_openrouter (modelo em modelo_openrouter), ambas no arquivo .env; os dois recebem só o texto extraído, nunca a imagem.</p>
+      <div class="acoes"><button type="button" id="tr-hy-verificar" class="btn">Verificar o motor escolhido</button><button type="button" id="tr-refinar" class="btn" disabled title="Melhora com o Hy-MT2 os capítulos que já foram traduzidos pelo Argos">Refinar capítulos já traduzidos</button><span id="tr-hy-status" class="nota" role="status"></span></div>
+    </fieldset>
+    <div class="acoes">
+      <span id="tr-chip" class="chip">Nenhuma tradução</span>
+      <button type="button" id="tr-cancelar" class="btn" hidden>Cancelar tradução</button>
+    </div>
+    <div id="tr-vazio" class="vazio"><strong>Nenhuma tradução em andamento</strong><span>Na Biblioteca, use “Traduzir tudo que falta” ou o botão de um capítulo; na aba Baixar, ligue “Traduzir automaticamente após concluir os downloads”.</span></div>
+    <div id="tr-painel" hidden>
+      <p id="tr-atual" class="tr-atual" role="status"></p>
+      <div class="tr-barra" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="tr-barra"><div id="tr-barra-in"></div></div>
+      <p id="tr-numeros" class="nota num"></p>
+      <div id="tr-aviso" class="faixa aviso" hidden>Falta instalar o recurso de tradução. No terminal, com o ambiente virtual ativado: pip install -r requirements-traducao.txt</div>
+      <div id="tr-erro" class="faixa erro" hidden></div>
+      <div id="tr-avisos" class="faixa aviso" hidden></div>
+      <ul id="tr-fila" class="tr-fila" aria-label="Capítulos da tradução"></ul>
+      <p id="tr-resumo" class="nota"></p>
+      <details><summary>Registro detalhado</summary><pre id="tr-log" class="registro" aria-live="off"></pre></details>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ CELULAR -->
+<section id="pg-celular" class="pagina" role="tabpanel" aria-labelledby="aba-celular" hidden>
+  <div class="secao">
+    <div class="secao-cab"><h2>Leitura pelo celular</h2><span class="suave">Somente leitura, só no Wi-Fi de casa. A biblioteca continua neste notebook.</span></div>
+    <div class="celular-grade">
+      <div class="qr" id="qr" aria-label="QR code para abrir a leitura no celular"><span class="nota" id="qr-vazio">Desligado</span></div>
+      <div class="secao">
+        <div class="acoes">
+          <button type="button" id="cel-ligar" class="btn principal grande">Ligar acesso do celular</button>
+          <button type="button" id="cel-desligar" class="btn grande" hidden>Desligar</button>
+        </div>
+        <label class="marcar"><input type="checkbox" id="cel-lembrar"> Ligar automaticamente quando o programa abrir</label>
+        <div id="cel-ligado" class="secao" hidden>
+          <ol class="passos">
+            <li>Conecte o celular no mesmo Wi-Fi do notebook.</li>
+            <li>Aponte a câmera para o QR code. A chave fica salva no celular.</li>
+            <li>Escolha a obra e leia. Capítulos novos aparecem sozinhos.</li>
+          </ol>
+          <div class="url-copia num" id="cel-url"></div>
+          <div class="acoes">
+            <button type="button" id="cel-copiar" class="btn pequeno">Copiar endereço</button>
+            <button type="button" id="cel-trocar" class="btn pequeno perigo" title="Gera outra chave. O QR antigo e os celulares já autorizados deixam de funcionar">Trocar chave</button>
+          </div>
+        </div>
+        <p id="cel-msg" class="msg" role="alert"></p>
+        <div id="cel-sem-rede" class="faixa aviso" hidden>Não achei o endereço do notebook na rede. Conecte-se ao Wi-Fi e tente de novo.</div>
+        <p class="nota">No Windows, na primeira vez, o firewall pergunta se o Python pode receber conexões: permita em “Redes privadas”. O celular só consegue ler; nada pode ser baixado, editado ou apagado por ele.</p>
+      </div>
+    </div>
+  </div>
+</section>
+</main>
+
+<div id="ampliada" hidden></div>
+<div id="toast" role="status" hidden></div>
+<script src="/estatico/comum.js"></script>
+<script src="/estatico/diagrama.js"></script>
+<script src="/estatico/qrcode.js"></script>
+<script src="/estatico/baixar.js"></script>
+<script src="/estatico/biblioteca.js"></script>
+<script src="/estatico/traducoes.js"></script>
+<script src="/estatico/celular.js"></script>
+</body>
+</html>

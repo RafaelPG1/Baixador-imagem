@@ -1,0 +1,30 @@
+# ---- SEGREDOS: nunca vão para o GitHub ----
+.env
+.env.*
+!.env.example
+*.key
+
+# ---- suas obras e dados locais (direitos autorais + tamanho): nunca vão para o GitHub ----
+obras/
+saida/
+dados/
+*.zip
+
+# ---- ambiente e caches ----
+.venv/
+venv/
+env/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.playwright/
+*.tmp
+*.log
+
+# ---- editor / ferramentas ----
+.vscode/
+.idea/
+.impeccable/
+.DS_Store
+Thumbs.db

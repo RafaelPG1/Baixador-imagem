@@ -1,0 +1,5 @@
+# Opcional: tradução do texto dentro das imagens (grátis e offline).
+# Instale com:  pip install -r requirements-traducao.txt
+# Atenção: o argostranslate depende do torch (pacote grande, centenas de MB).
+rapidocr-onnxruntime>=1.2.3,<2
+argostranslate>=1.9,<2

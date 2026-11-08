@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Leitor</title>
+<link rel="stylesheet" href="/estatico/leitor.css">
+</head>
+<body>
+<!-- Leitor global: uma só página para todas as obras e capítulos. O capítulo vem do endereço (?c=Obra/Capítulo) e os
+     dados, de /api/leitura. Nada aqui é gerado por capítulo. -->
+<nav id="progresso" aria-label="Páginas do capítulo"></nav>
+<div id="pq-num" hidden></div>
+<div id="flutuantes" hidden>
+  <div class="fl" id="pilula">
+    <a id="anterior" href="#" aria-label="Capítulo anterior" aria-disabled="true"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg></a>
+    <span id="cap-pos" aria-live="polite"><b>–</b></span>
+    <a id="proximo" href="#" aria-label="Próximo capítulo" aria-disabled="true"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></a>
+  </div>
+  <div class="fl" id="coluna">
+    <a id="casa" href="#" aria-label="Voltar para a biblioteca" title="Biblioteca"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h5v-6h4v6h5V10"/></svg></a>
+    <button id="livro" type="button" aria-disabled="true" aria-label="Página da obra" title="Página da obra"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 5c3-1 6-1 10 1 4-2 7-2 10-1v14c-3-1-6-1-10 1-4-2-7-2-10-1z"/><path d="M12 6v14"/></svg></button>
+    <button id="lista" type="button" aria-label="Capítulos da obra" title="Capítulos" aria-expanded="false" aria-controls="painel-lista"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg></button>
+    <button id="idioma" type="button" aria-pressed="false" aria-disabled="true" aria-label="Ver o idioma original" title="Ver o idioma original"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h11M8.5 3v2M5 5c1 4 4 7 8 8M12 5c-1 4-4 7-8 8"/><path d="M13 21l4-10 4 10M14.5 17.5h5"/></svg></button>
+  </div>
+  <nav class="fl" id="painel-lista" hidden aria-label="Capítulos da obra"><div class="pl-cab"><strong>Capítulos</strong><button id="fechar-lista" type="button" aria-label="Fechar lista">✕</button></div><ul id="lista-caps"></ul></nav>
+</div>
+<main id="paginas"><p class="vazio" id="carregando">Carregando…</p></main>
+<div id="fim"></div>
+<nav class="navcap" id="navcap" hidden aria-label="Capítulos"></nav>
+<aside id="editor" hidden aria-live="polite">
+  <h2 id="ed-titulo" title="Clique para recolher/expandir o painel">Edição</h2>
+  <div id="ed-ajuste" hidden>
+    <div class="ajuste">
+      <span>Topo</span><button type="button" data-b="t" data-d="-1">−</button><button type="button" data-b="t" data-d="1">+</button>
+      <span>Base</span><button type="button" data-b="b" data-d="-1">−</button><button type="button" data-b="b" data-d="1">+</button>
+      <span>Esq.</span><button type="button" data-b="l" data-d="-1">−</button><button type="button" data-b="l" data-d="1">+</button>
+      <span>Dir.</span><button type="button" data-b="r" data-d="-1">−</button><button type="button" data-b="r" data-d="1">+</button>
+      <button type="button" id="ed-larg">Largura toda</button>
+    </div>
+    <p class="dica">Teclado: setas movem · Shift+↑↓←→ mexe na base/direita · Ctrl+↑↓←→ mexe no topo/esquerda. Roda do mouse rola a página mesmo arrastando.</p>
+  </div>
+  <div id="ed-campos" hidden>
+    <label id="ed-rot-orig">Texto original<textarea id="ed-orig" rows="2" maxlength="600"></textarea></label>
+    <label id="ed-rot-trad">Tradução<textarea id="ed-trad" rows="3" maxlength="600"></textarea></label>
+    <div class="estilo" id="ed-estilo">
+      <label>Fundo <input type="color" id="ed-fundo" value="#ffffff"></label>
+      <label>Letra <input type="color" id="ed-cor" value="#111111"></label>
+      <label>Tamanho <input type="number" id="ed-fonte" min="0" max="600" placeholder="auto" title="Tamanho da letra na imagem (px). Vazio ou 0 = automático"></label>
+    </div>
+    <div class="acoes">
+      <button id="ed-retrad" type="button" class="principal">Traduzir de novo</button>
+      <button id="ed-aplicar" type="button" class="principal">Aplicar alterações</button>
+      <button id="ed-remover" type="button">Remover</button>
+      <button id="ed-area" type="button" class="principal">Ler e traduzir a área</button>
+      <button id="ed-criar" type="button">Criar com a tradução digitada</button>
+    </div>
+  </div>
+  <div class="acoes geral">
+    <button id="ed-alerta" type="button" title="Vai para o próximo trecho que o programa acha suspeito">Próximo alerta</button>
+    <button id="ed-img" type="button">Refazer esta imagem</button>
+    <button id="ed-tudo" type="button">Refazer o capítulo inteiro</button>
+    <button id="ed-fechar" type="button">Fechar seleção</button>
+  </div>
+  <p id="ed-msg"></p>
+</aside>
+<script src="/estatico/leitor.js"></script>
+</body>
+</html>

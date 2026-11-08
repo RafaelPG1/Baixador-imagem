@@ -1,0 +1,74 @@
+:root { color-scheme: dark; --fundo: #10151c; --texto: #e9eef5; --suave: #9aa8ba; --painel: #18202b; --borda: #2a3544; --acento: #5aa2ff; --linha: #2f6fdc; }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--fundo); color: var(--texto); font: 16px/1.5 "Segoe UI", system-ui, -apple-system, "Helvetica Neue", sans-serif; }
+a { color: var(--acento); }
+:focus-visible { outline: 2px solid var(--acento); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; transition: none !important; } }
+main { margin: 0 auto; width: min(var(--largura, 800px), 100%); }
+figure { margin: 0; position: relative; min-height: 120px; background: transparent; }
+figure + figure { margin-top: -1px; }          /* sobrepõe 1px: sem fresta entre imagens em telas de densidade fracionária */
+figure img { display: block; width: 100%; height: auto; }
+figure.com-medidas { min-height: 0; }
+.tr { position: absolute; display: flex; align-items: center; justify-content: center; text-align: center; overflow: hidden;
+  border-radius: 3px; line-height: 1.1; font-weight: 700; text-wrap: balance; font-family: "Comic Neue", "Comic Sans MS", "Segoe UI", system-ui, sans-serif;
+  padding: max(1px, .08em) max(2px, .2em); box-sizing: border-box; overflow-wrap: normal; word-break: normal; hyphens: none; }
+.tr[data-s] { overflow: visible; }                    /* nem no tamanho mínimo coube: melhor passar um pouco da caixa do que cortar a frase */
+
+/* ---- controles flutuantes (escondidos até dar dois cliques na leitura) e barra de progresso lateral */
+main { touch-action: manipulation; }
+figure { -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; }
+#flutuantes[hidden], #painel-lista[hidden] { display: none; }
+.fl { position: fixed; z-index: 20; color: #e7ebf1; background: rgba(33, 37, 44, .94); border: 1px solid rgba(255,255,255,.12);
+  box-shadow: 0 6px 22px rgba(0,0,0,.35); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); }
+.fl a, .fl button { display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; padding: 0; border: 0;
+  border-radius: 9px; background: transparent; color: inherit; cursor: pointer; text-decoration: none; font: inherit; }
+.fl a:hover, .fl button:hover { background: rgba(255,255,255,.1); }
+.fl [aria-pressed=true] { background: rgba(90, 162, 255, .28); box-shadow: inset 0 0 0 1px rgba(140, 191, 255, .7); }
+body.original .tr { visibility: hidden; }              /* idioma original: a imagem sem os textos sobrepostos */
+.fl [aria-disabled=true] { opacity: .35; pointer-events: none; }
+.fl svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+#coluna { right: max(10px, env(safe-area-inset-right)); top: calc(max(10px, env(safe-area-inset-top)) + 62px); display: flex; flex-direction: column; gap: 2px;
+  padding: 6px; border-radius: 12px; }   /* logo abaixo da pílula ‹ n/total › */
+#pilula { top: max(10px, env(safe-area-inset-top)); right: max(10px, env(safe-area-inset-right)); display: flex; align-items: center; padding: 4px;
+  border-radius: 12px; }
+#pilula span { min-width: 76px; text-align: center; font-weight: 700; font-size: .9rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
+#pilula b { font-weight: 700; }
+#pilula i { font-style: normal; opacity: .6; font-weight: 500; }
+#painel-lista { right: calc(max(10px, env(safe-area-inset-right)) + 66px); top: calc(max(10px, env(safe-area-inset-top)) + 62px); width: min(300px, calc(100vw - 96px));
+  max-height: 72vh; overflow: auto; padding: 6px; border-radius: 12px; }
+.pl-cab { position: sticky; top: -6px; display: flex; align-items: center; justify-content: space-between; padding: 6px 6px 8px 12px; background: inherit; z-index: 1; }
+.pl-cab strong { font-size: 1rem; }
+#fechar-lista { all: unset; box-sizing: border-box; width: 36px; height: 36px; display: grid; place-items: center; border-radius: 8px; cursor: pointer; font-size: 1rem; }
+#fechar-lista:hover { background: rgba(255,255,255,.12); }
+#painel-lista a span { margin-left: 8px; font-weight: 400; opacity: .7; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#painel-lista ul { list-style: none; margin: 0; padding: 0; }
+#painel-lista a { display: flex; justify-content: flex-start; width: 100%; height: auto; min-height: 44px; padding: 8px 12px; font-size: .9rem; font-weight: 600; line-height: 1.25; }
+#painel-lista a[aria-current=true] { background: #22d3ee; color: #06232a; }
+/* Progresso: do topo ao fim da tela, colado na esquerda. Parado é uma risca fina e discreta; tocar/clicar o deixa
+   "selecionado" (retângulo mais largo, com o número da página) até tocar em outro lugar. */
+#progresso { position: fixed; z-index: 15; left: 0; top: 0; bottom: 0; width: 14px; display: flex; flex-direction: column; touch-action: none;
+  -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; cursor: pointer; }
+#progresso.aberta { width: 22px; }
+#progresso button { flex: 1 1 0; min-height: 0; position: relative; width: 100%; padding: 0; border: 0; background: transparent; cursor: pointer;
+  -webkit-tap-highlight-color: transparent; -webkit-user-select: none; user-select: none; outline: none; }
+#progresso button::before { content: ""; position: absolute; left: 0; width: 3px; top: 0; bottom: 1px; background: rgba(150, 156, 168, .38);
+  transition: width .12s ease, background .12s ease; }
+#progresso button.lido::before { background: rgba(150, 156, 168, .6); }
+#progresso button.atual::before { background: #22d3ee; }
+#progresso:hover button::before { width: 8px; }
+#progresso.aberta button::before { width: 16px; background: rgba(255, 255, 255, .14); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .16); }
+#progresso.aberta button.lido::before { background: rgba(34, 190, 214, .5); box-shadow: inset 0 0 0 1px rgba(34, 211, 238, .35); }
+#progresso.aberta button.atual::before { background: #22d3ee; box-shadow: inset 0 0 0 1px #a5f3fc; }
+#pq-num { position: fixed; z-index: 16; left: 26px; top: 0; transform: translateY(-50%); padding: 4px 10px; border-radius: 8px; pointer-events: none;
+  font-weight: 700; font-size: .85rem; font-variant-numeric: tabular-nums; color: #e7ebf1; background: rgba(33, 37, 44, .96); border: 1px solid rgba(255,255,255,.14);
+  box-shadow: 0 4px 14px rgba(0,0,0,.35); white-space: nowrap; }
+#pq-num[hidden] { display: none; }
+body.numeros .fim { padding: 40px 16px 24px; text-align: center; color: var(--suave); }
+.navcap { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; padding: 0 16px 96px; }
+.navcap a { display: inline-flex; align-items: center; min-height: 44px; padding: 0 14px; border: 1px solid var(--borda); border-radius: 8px;
+  background: transparent; color: var(--texto); font-size: .9rem; font-weight: 600; text-decoration: none; }
+.navcap a:hover { background: var(--painel); }
+.navcap a.principal { background: var(--linha); border-color: transparent; color: #fff; }
+.navcap [aria-disabled=true] { opacity: .45; pointer-events: none; }
+.vazio { padding: 64px 16px; text-align: center; color: var(--suave); }
+@media (prefers-reduced-motion: reduce) { #progresso button::before { transition: none; } }

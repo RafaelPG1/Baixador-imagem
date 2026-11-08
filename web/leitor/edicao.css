@@ -1,0 +1,36 @@
+body.edicao .tr { outline: 1px dashed #4da3ff; cursor: pointer; }
+body.edicao .tr[data-a] { outline: 2px dotted #ff5a5a; }
+body.edicao .tr.sel { outline: 2px solid #ff9f1a; }
+body.edicao figure { cursor: crosshair; user-select: none; -webkit-user-select: none; }
+body.edicao figure img { -webkit-user-drag: none; }
+figure .caixa { position: absolute; z-index: 4; border: 2px solid #ff9f1a; background: #ff9f1a22; cursor: move; touch-action: none; }
+figure .caixa .al { position: absolute; width: 12px; height: 12px; margin: -6px 0 0 -6px; border: 2px solid #ff9f1a; background: #fff; border-radius: 3px; touch-action: none; }
+.al[data-p=nw] { left: 0; top: 0; cursor: nwse-resize; } .al[data-p=n] { left: 50%; top: 0; cursor: ns-resize; }
+.al[data-p=ne] { left: 100%; top: 0; cursor: nesw-resize; } .al[data-p=e] { left: 100%; top: 50%; cursor: ew-resize; }
+.al[data-p=se] { left: 100%; top: 100%; cursor: nwse-resize; } .al[data-p=s] { left: 50%; top: 100%; cursor: ns-resize; }
+.al[data-p=sw] { left: 0; top: 100%; cursor: nesw-resize; } .al[data-p=w] { left: 0; top: 50%; cursor: ew-resize; }
+#editor { position: fixed; right: 12px; bottom: 12px; z-index: 20; width: min(440px, calc(100vw - 24px)); max-height: calc(100vh - 24px);
+  overflow: auto; padding: 14px; border: 1px solid var(--borda); border-radius: 12px; background: var(--painel); box-shadow: 0 8px 30px #0006; }
+#editor[hidden], #editor [hidden] { display: none; }
+#editor h2 { margin: 0 0 8px; font-size: .95rem; }
+#editor label { display: block; margin-top: 8px; font-size: .8rem; color: var(--suave); }
+#editor textarea { display: block; width: 100%; margin-top: 4px; padding: 8px; box-sizing: border-box; border: 1px solid var(--borda);
+  border-radius: 8px; background: transparent; color: var(--texto); font: inherit; font-size: .9rem; resize: vertical; }
+#editor .estilo { display: flex; gap: 12px; align-items: flex-end; margin-top: 4px; }
+#editor .estilo label { margin-top: 4px; }
+#editor .estilo input[type=color] { display: block; width: 44px; height: 30px; padding: 0; border: 1px solid var(--borda); border-radius: 6px; background: transparent; }
+#editor .estilo input[type=number] { display: block; width: 84px; padding: 6px; border: 1px solid var(--borda); border-radius: 6px; background: transparent; color: var(--texto); font: inherit; }
+#editor .acoes { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+#editor .acoes.geral { padding-top: 10px; border-top: 1px solid var(--borda); }
+#editor button { padding: 8px 12px; border: 1px solid var(--borda); border-radius: 8px; background: transparent; color: var(--texto);
+  font: inherit; font-size: .85rem; cursor: pointer; }
+#editor button.principal { background: var(--acento); border-color: var(--acento); color: #fff; }
+#editor button:disabled { opacity: .5; cursor: wait; }
+#editor h2 { cursor: pointer; }
+#editor.min > *:not(h2) { display: none; }
+#editor .ajuste { display: grid; grid-template-columns: auto 34px 34px auto 34px 34px; gap: 6px 8px; align-items: center; margin-top: 8px; font-size: .8rem; color: var(--suave); }
+#editor .ajuste button { padding: 4px 0; }
+#editor .ajuste #ed-larg { grid-column: 1 / -1; }
+#editor .dica { margin: 6px 0 0; font-size: .72rem; color: var(--suave); }
+#ed-msg { min-height: 1.2em; margin: 8px 0 0; font-size: .8rem; color: var(--suave); }
+#ed-msg.erro { color: #ff6b6b; }

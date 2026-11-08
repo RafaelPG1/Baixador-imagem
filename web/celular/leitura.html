@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="referrer" content="no-referrer">
+<title>Leitura</title>
+<link rel="stylesheet" href="/estatico/base.css">
+<style>
+  body { padding-bottom: env(safe-area-inset-bottom); }
+  .topo-in { min-height: 52px; }
+  main { padding: 12px 0 48px; }
+  .btn { min-height: 44px; }
+  .sub { padding: 0 16px 8px; }
+  main.bib { padding: 0 16px 48px; }
+  main.bib .bib-barra { position: sticky; top: 52px; margin: 0 -16px; padding: 10px 16px; }
+  main.bib .bib-busca { flex: 1 1 100%; order: 5; } main.bib .bib-busca input, main.bib .bib-busca input:focus { width: 100%; min-height: 44px; }
+  main.bib .bib-barra[hidden] { display: none; }
+  .bib-ficha { position: static; }
+</style>
+</head>
+<body>
+<header class="topo"><div class="topo-in"><div class="marca"><span class="marca-sinal" aria-hidden="true">B</span> Leitura</div>
+  <div class="topo-fim"><span id="sync" class="chip ok">Atualizado</span></div></div></header>
+<main class="bib">
+  <div id="bib-barra" class="bib-barra" hidden>
+    <h2 class="bib-titulo">Biblioteca <span id="bib-conta" class="suave num"></span></h2>
+    <label class="bib-busca">
+      <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      <input id="bib-filtro" type="search" placeholder="Buscar obra" aria-label="Buscar obra pelo nome" autocomplete="off" spellcheck="false">
+    </label>
+  </div>
+  <div id="linhas" class="linhas" aria-live="polite"><div class="esqueleto"></div><div class="esqueleto"></div></div>
+</main>
+<div id="toast" role="status" hidden></div>
+<script src="/estatico/diagrama.js"></script>
+<script src="/estatico/leitura.js"></script>
+</body>
+</html>
