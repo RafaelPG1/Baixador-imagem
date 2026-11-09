@@ -118,6 +118,22 @@
     return { base: base, chave: chave };
   }
 
+  /* Testa o caminho em 3 etapas e diz qual trava (ajuda a separar rede/Tailscale de pré-verificação CORS). A chave nunca é mostrada. */
+  async function diagnosticar(c) {
+    var linhas = [];
+    async function etapa(nome, url, init) {
+      var ctl = new AbortController(), t0 = Date.now(), fim = setTimeout(function () { ctl.abort(); }, 10000);
+      init = init || {}; init.signal = ctl.signal; init.cache = 'no-store';
+      try { var r = await fetch(url, init); linhas.push(nome + ': HTTP ' + r.status + ' (' + (Date.now() - t0) + ' ms)'); }
+      catch (e) { linhas.push(nome + ': ' + (ctl.signal.aborted ? 'sem resposta em 10 s' : 'falhou (' + (e && e.name) + ': ' + (e && e.message) + ')')); }
+      finally { clearTimeout(fim); }
+    }
+    await etapa('1 sem chave', c.base + '/api/app/ping');
+    await etapa('2 chave na URL', c.base + '/api/app/ping?k=' + encodeURIComponent(c.chave));
+    await etapa('3 chave no cabeçalho', c.base + '/api/app/ping', { headers: { Authorization: 'Bearer ' + c.chave } });
+    return linhas.join('\n');
+  }
+
   async function fetchAuth(caminho, opcoes) {
     var c = (opcoes && opcoes.cfg) || cfg(); if (!c) throw new Error('Conecte ao notebook primeiro.');
     var ctl = new AbortController(), limite = (opcoes && opcoes.limite) || 20000, estourou = false;
@@ -216,7 +232,10 @@
         var t0 = Date.now(), r = await fetchAuth('/api/app/ping', { cfg: c, limite: 15000 }), j = await r.json();
         guardar(CHAVE_CFG, JSON.stringify(c));
         aviso('Conectado: ' + j.obras + ' obra(s) no notebook (' + (Date.now() - t0) + ' ms).'); location.hash = '#/';
-      } catch (e) { msg.className = 'msg'; msg.textContent = mensagemErro(e); } finally { scan.disabled = ir.disabled = false; }
+      } catch (e) {
+        msg.className = 'msg'; msg.textContent = mensagemErro(e);
+        try { var c2 = lerPareamento(texto); msg.textContent += '\n\nDiagnóstico…'; var d = await diagnosticar(c2); msg.style.whiteSpace = 'pre-wrap'; msg.textContent = mensagemErro(e) + '\n\nDiagnóstico:\n' + d; } catch (_) { }
+      } finally { scan.disabled = ir.disabled = false; }
     }
     scan.addEventListener('click', async function () {
       msg.textContent = '';
