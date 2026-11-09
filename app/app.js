@@ -228,11 +228,7 @@
     var reinstalar = el('button', 'btn', 'Reinstalar o app'); reinstalar.type = 'button'; reinstalar.title = 'Apaga só o código guardado do app e baixa de novo. Suas obras não são apagadas.';
     verificar.addEventListener('click', async function () { verificar.disabled = true; estado.textContent = 'Verificando…'; estado.textContent = await verificarAtualizacao(); aplicar.hidden = !esperando; verificar.disabled = false; });
     aplicar.addEventListener('click', aplicarAtualizacao);
-    reinstalar.addEventListener('click', async function () {
-      if (!confirm('Reinstalar o app? Precisa de internet. Suas obras importadas continuam no celular.')) return;
-      try { var rs = await navigator.serviceWorker.getRegistrations(); await Promise.all(rs.map(function (r) { return r.unregister(); })); var ks = await caches.keys(); await Promise.all(ks.filter(function (k) { return k.indexOf('baixador-app-') === 0; }).map(function (k) { return caches.delete(k); })); } catch (_) {}
-      location.reload();
-    });
+    reinstalar.addEventListener('click', function () { if (confirm('Reinstalar o app? Precisa de internet. Suas obras importadas continuam no celular.')) reinstalarApp(); });
     linha.append(verificar, aplicar, reinstalar); blocoApp.append(versao, estado, linha);
     versaoDoApp().then(function (v) { versao.textContent = 'Versão: ' + v; });
 
@@ -266,7 +262,25 @@
   /* ---------------- atualização do app (service worker) ---------------- */
   var reg = null, esperando = null, tinhaControlador = false, recarregando = false;
   function nova(w) { esperando = w; $('atualiza').hidden = false; }
-  function aplicarAtualizacao() { if (esperando) esperando.postMessage('PULAR_ESPERA'); }
+  /* Atualizar: pede ao service worker novo para assumir (a página recarrega sozinha quando ele assume). Se isso não acontecer
+     em 3 s (worker perdido, aba antiga etc.), refaz o código guardado do app, o que sempre funciona com internet. As obras ficam. */
+  async function reinstalarApp() {
+    if (recarregando) return;
+    if (!navigator.onLine) { aviso('Sem internet: não dá para atualizar agora.'); resetarBotaoAtualizar(); return; }
+    recarregando = true;
+    try {
+      var rs = await navigator.serviceWorker.getRegistrations(); await Promise.all(rs.map(function (r) { return r.unregister(); }));
+      var ks = await caches.keys(); await Promise.all(ks.filter(function (k) { return k.indexOf('baixador-app-') === 0; }).map(function (k) { return caches.delete(k); }));
+    } catch (_) {}
+    location.reload();
+  }
+  function resetarBotaoAtualizar() { var b = $('atualiza-ok'); b.disabled = false; b.textContent = 'Atualizar agora'; }
+  function aplicarAtualizacao() {
+    var b = $('atualiza-ok'); b.disabled = true; b.textContent = 'Atualizando…';
+    var w = (reg && reg.waiting) || esperando;
+    if (w) { try { w.postMessage('PULAR_ESPERA'); } catch (_) {} }
+    setTimeout(reinstalarApp, w ? 3000 : 0);
+  }
   async function registrar() {
     if (!('serviceWorker' in navigator)) return;
     tinhaControlador = !!navigator.serviceWorker.controller;
@@ -292,7 +306,15 @@
   }
   function versaoDoApp() {
     return new Promise(function (ok) {
-      var c = navigator.serviceWorker && navigator.serviceWorker.controller; if (!c) return ok('sem modo offline');
+      if (!navigator.serviceWorker) return ok('sem modo offline');
+      var c = navigator.serviceWorker.controller;
+      if (!c) {                                          // acabou de (re)instalar: espera o worker assumir a página
+        var limite = new Promise(function (r) { setTimeout(r, 3000); });
+        return Promise.race([navigator.serviceWorker.ready, limite]).then(function () {
+          if (!navigator.serviceWorker.controller) return ok('sem modo offline (recarregue o app)');
+          return versaoDoApp().then(ok);
+        });
+      }
       var canal = new MessageChannel(); canal.port1.onmessage = function (e) { ok(e.data === '__VERSAO__' ? 'desenvolvimento' : e.data); };
       c.postMessage('VERSAO', [canal.port2]); setTimeout(function () { ok('desconhecida'); }, 1500);
     });

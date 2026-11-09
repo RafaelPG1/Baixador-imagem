@@ -251,6 +251,24 @@
         </div>
         <p id="cel-msg" class="msg" role="alert"></p>
         <div id="cel-sem-rede" class="faixa aviso" hidden>Não achei o endereço do notebook na rede. Conecte-se ao Wi-Fi e tente de novo.</div>
+        <div id="cel-app" class="secao">
+          <h3>App Android (acesso de qualquer lugar, pelo Tailscale)</h3>
+          <ol class="passos">
+            <li>Instale o Tailscale neste notebook e no celular, entrando com a mesma conta. No painel do Tailscale (login.tailscale.com), ative <strong>MagicDNS</strong> e <strong>HTTPS Certificates</strong>.</li>
+            <li>Aqui em cima, clique em <strong>Ligar acesso do celular</strong>. Depois rode este comando no PowerShell do notebook (uma vez):<div class="url-copia num" id="cel-comando"></div></li>
+            <li>Informe o nome do notebook no Tailscale (termina em <code>.ts.net</code>) ou clique em <strong>Detectar</strong>:
+              <div class="acoes"><input type="text" id="cel-ts" class="campo" placeholder="notebook.tailXXXX.ts.net" autocomplete="off" spellcheck="false">
+              <button type="button" id="cel-ts-salvar" class="btn pequeno">Salvar</button>
+              <button type="button" id="cel-ts-detectar" class="btn pequeno">Detectar</button></div></li>
+            <li>No app, toque em <strong>Conectar</strong> e aponte a câmera para este QR (ou cole o código):</li>
+          </ol>
+          <div id="cel-app-ok" hidden>
+            <div class="qr" id="qr-app" aria-label="QR code para parear o app Android"></div>
+            <div class="url-copia num" id="cel-app-url"></div>
+            <div class="acoes"><button type="button" id="cel-app-copiar" class="btn pequeno">Copiar código</button></div>
+          </div>
+          <p id="cel-app-msg" class="msg" role="alert"></p>
+        </div>
         <p class="nota">No Windows, na primeira vez, o firewall pergunta se o Python pode receber conexões: permita em “Redes privadas”. O celular só consegue ler; nada pode ser baixado, editado ou apagado por ele.</p>
       </div>
     </div>

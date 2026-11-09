@@ -1,0 +1,82 @@
+# Compila o app Android (APK) na nuvem do GitHub e o publica em Releases como "apk-latest".
+# Para instalar: no celular, abra a página Releases do repositório, baixe BaixadorLeitor.apk e instale.
+name: Compilar APK
+
+on:
+  push:
+    branches: [main, master]
+    paths: ['android-app/**', '.github/workflows/apk.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apk
+  cancel-in-progress: true
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: android-app
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: android-app/package-lock.json
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Android SDK (licenças e plataforma)
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Dependências
+        run: npm ci
+
+      - name: Versão no app
+        run: sed -i "s/__VERSAO__/1.0.${{ github.run_number }}/" www/index.html
+
+      - name: Gerar o projeto Android
+        run: |
+          npx cap add android
+          python3 scripts/preparar_android.py
+          npx cap sync android
+        env:
+          VERSION_CODE: ${{ github.run_number }}
+          VERSION_NAME: 1.0.${{ github.run_number }}
+
+      - name: Chave de assinatura
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          mkdir -p ~/.android
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > ~/.android/debug.keystore
+            echo "ASSINATURA=chave fixa (atualiza por cima)" >> "$GITHUB_ENV"
+          else
+            echo "ASSINATURA=chave temporária (para atualizar, desinstale o app antes)" >> "$GITHUB_ENV"
+          fi
+
+      - name: Compilar
+        working-directory: android-app/android
+        run: ./gradlew assembleDebug --no-daemon
+
+      - name: Publicar em Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp android/app/build/outputs/apk/debug/app-debug.apk BaixadorLeitor.apk
+          gh release delete apk-latest --yes --cleanup-tag || true
+          gh release create apk-latest BaixadorLeitor.apk --target "${{ github.sha }}" \
+            --title "Baixador Leitor 1.0.${{ github.run_number }}" \
+            --notes "APK do app Android. Assinatura: ${ASSINATURA}."

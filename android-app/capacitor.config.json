@@ -1,0 +1,8 @@
+{
+  "appId": "com.baixador.leitor",
+  "appName": "Baixador Leitor",
+  "webDir": "www",
+  "backgroundColor": "#10151c",
+  "server": { "androidScheme": "https" },
+  "android": { "allowMixedContent": false }
+}

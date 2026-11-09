@@ -1,0 +1,9 @@
+{
+  "name": "baixador-salvar",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Plugin Capacitor local: baixa um ZIP do notebook direto para Download/Baixador/<obra>/ (MediaStore, sem permissões).",
+  "main": "index.js",
+  "files": ["android/src/main/", "android/build.gradle", "index.js"],
+  "capacitor": { "android": { "src": "android" } }
+}

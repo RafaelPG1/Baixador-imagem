@@ -28,3 +28,11 @@ __pycache__/
 .impeccable/
 .DS_Store
 Thumbs.db
+
+# ---- app Android ----
+android-app/node_modules/
+android-app/android/
+chave-apk*
+*.keystore
+*.jks
+*.apk

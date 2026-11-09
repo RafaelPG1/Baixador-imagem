@@ -19,7 +19,6 @@ import os
 import secrets
 import subprocess
 import sys
-import tempfile
 import time
 import traceback
 import webbrowser
@@ -35,6 +34,7 @@ from baixador.biblioteca import capa as capa_obra, estrutura, exportar, obra as 
 from baixador.servidor.base import (
     CSS, ESTATICOS_EDICAO, ESTATICOS_LEITOR, JS, ServidorSilencioso, ler_capa, ler_web, pagina_leitor,
 )
+from baixador.servidor import celular as celular_servidor
 from baixador.servidor.celular import ControleCelular
 from baixador.nucleo.erros import ErroBaixador
 from baixador.configuracao import ARQUIVO_CELULAR, PASTA_PADRAO, migrar_dados_antigos, migrar_pasta_biblioteca
@@ -534,6 +534,20 @@ class Manipulador(BaseHTTPRequestHandler):
                 return self._negar(409, str(erro))
             return self._json(200, celular.estado())
 
+        if caminho == "/api/celular/tailscale":              # nome *.ts.net deste notebook (digitado ou detectado)
+            celular = self.server.celular  # type: ignore[attr-defined]
+            try:
+                if dados.get("detectar"):
+                    achado = celular_servidor.detectar_tailscale()
+                    if not achado:
+                        return self._negar(404, "Não consegui perguntar ao Tailscale. Ele está instalado e conectado neste notebook? Você pode digitar o nome à mão.")
+                    celular.definir_tailscale(achado)
+                else:
+                    celular.definir_tailscale(str(dados.get("host", "")))
+            except ValueError as erro:
+                return self._negar(400, str(erro))
+            return self._json(200, celular.estado())
+
         return self._negar(404, "Endereço desconhecido.")
 
     def _baixar_capa(self, manual: SessaoManual, raiz: Path, dados: Dict[str, Any]) -> None:
@@ -643,41 +657,15 @@ class Manipulador(BaseHTTPRequestHandler):
     def _exportar(self, consulta: Dict[str, List[str]]) -> None:
         """Monta o ZIP num arquivo temporário (não na memória) e o envia como download. Só lê a biblioteca."""
         raiz: Path = self.server.raiz  # type: ignore[attr-defined]
-        rels = {r[:300] for r in consulta.get("rel", [])}
-        obra = (consulta.get("obra") or [""])[0][:120]
-        todos = [
-            (o["nome"], c) for o in biblioteca.listar(raiz)["obras"]
-            if not obra or organizacao._chave(o["nome"]) == organizacao._chave(obra)
-            for c in o["capitulos"] if (not rels or c["rel"] in rels)
-        ]
+        rels, obra = consulta.get("rel", []), (consulta.get("obra") or [""])[0]
         if not (rels or obra):
             return self._negar(400, "Escolha capítulos (rel=) ou uma obra (obra=) para exportar.")
-        if not todos:
+        pronto = exportar.zip_temporario(raiz, rels, obra)
+        if pronto is None:
             return self._negar(404, "Nenhum capítulo encontrado para exportar.")
-        todos.sort(key=lambda x: (x[0].casefold(), x[1].get("numero") is None, str(x[1].get("numero") or ""), x[1]["rel"]))
-        with tempfile.TemporaryFile() as arquivo:
-            resumo = exportar.gerar_zip(raiz, [c for _, c in todos], arquivo)
-            if not resumo["capitulos"]:
-                return self._negar(404, "Os capítulos escolhidos não têm imagens para exportar.")
-            tamanho = arquivo.seek(0, os.SEEK_END)
-            arquivo.seek(0)
-            nome = (obra or (todos[0][0] if len({n for n, _ in todos}) == 1 else "baixador")) + ".zip"
-            seguro = "".join(ch if ch.isalnum() or ch in " ._-" else "_" for ch in nome).strip() or "baixador.zip"
-            try:
-                self.send_response(200)
-                self.send_header("Content-Type", "application/zip")
-                self.send_header("Content-Length", str(tamanho))
-                self.send_header("Content-Disposition", f"attachment; filename=\"{seguro}\"; filename*=UTF-8''{quote(nome)}")
-                self.send_header("Cache-Control", "no-store")
-                self.send_header("X-Content-Type-Options", "nosniff")
-                self.end_headers()
-                while True:
-                    pedaco = arquivo.read(1024 * 256)
-                    if not pedaco:
-                        break
-                    self.wfile.write(pedaco)
-            except (ConnectionError, TimeoutError):
-                pass                                          # o navegador cancelou o download
+        arquivo, tamanho, nome = pronto
+        with arquivo:
+            exportar.transmitir(self, arquivo, tamanho, nome)
 
     def _reajustar(self, dados: Dict[str, Any]) -> None:
         raiz: Path = self.server.raiz  # type: ignore[attr-defined]

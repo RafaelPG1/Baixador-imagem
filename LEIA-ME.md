@@ -311,30 +311,48 @@ A biblioteca fica em `obras\` (antes `saida\`). Se ao abrir só existir `saida\`
 - **Retraduzir / Reajustar capítulos escolhidos:** na página da obra, **Mais ações → Retraduzir capítulos…** ou **Reajustar capítulos…** abre uma seleção na lista de capítulos (só os traduzidos podem ser marcados; há **Selecionar todos** e **Cancelar**). Retraduzir mantém a tradução antiga até a nova terminar (e a restaura se falhar); Reajustar refaz só caixas e cores, sem OCR nem tradução.
 - **Migração dos glossários antigos:** ao iniciar, o programa leva o `glossario.json` de cada capítulo para o glossário único da obra (`obras/<Obra>/glossario.json`), juntando nomes automáticos, `manter` e `termos` (em conflito de termo, vale o que já estava na obra) e só apagando o arquivo do capítulo depois de confirmar que o da obra foi gravado.
 
-## App do celular offline (PWA no GitHub Pages)
+## App Android (acesso de qualquer lugar pelo Tailscale)
 
-O GitHub guarda **só o código do app** (pasta `app/`). **As obras nunca vão para o GitHub**: o `.gitignore` bloqueia `obras/`, `dados/`, `.env` e `*.zip`.
+O app é um APK próprio (Capacitor), instalado como qualquer aplicativo, sem depender do Chrome. Ele fala com o notebook por um **HTTPS privado do Tailscale** (sem abrir portas no roteador e sem expor o notebook à internet), mostra as obras do notebook, baixa capítulos para ler **offline** e salva **ZIPs** em `Download/Baixador/<Obra>/`.
 
-**Como funciona**
-1. No notebook (Biblioteca): abra a obra → **Mais ações → Exportar para o app…**, marque os capítulos e clique **Exportar**. (Ou, no painel de um capítulo, **Exportar para o app do celular**.) Baixa um ZIP com as imagens e a tradução.
-2. Passe o ZIP para o celular (cabo, Drive, Wi‑Fi…).
-3. No celular, abra o app (endereço do GitHub Pages), instale na tela inicial e toque em **Importar**. As obras ficam guardadas no celular; depois disso **funciona sem internet**.
-4. **Ajustes → Verificar atualização / Atualizar agora**: o app nunca se atualiza sozinho pela metade; quando há versão nova aparece uma faixa "Atualizar agora". **Reinstalar o app** refaz o código guardado sem apagar as obras.
+**1. Tailscale (uma vez)**
+1. Instale o Tailscale no notebook e no celular e entre com a **mesma conta** nos dois (ative verificação em duas etapas na conta Google/Microsoft que você usar).
+2. No painel https://login.tailscale.com/admin/dns ative **MagicDNS** e **HTTPS Certificates**.
+3. No notebook, abra o programa → **Leitura pelo celular** → **Ligar acesso do celular**. Depois rode no PowerShell (uma vez; mostra o comando exato na tela):
+   ```powershell
+   tailscale serve --bg 8765
+   ```
+   (`tailscale serve status` confere; `tailscale serve reset` desfaz.) O servidor do programa fica só neste notebook e o Tailscale entrega o HTTPS.
+4. Ainda na aba **Leitura pelo celular**, em *App Android*, clique **Detectar** (ou digite o nome `….ts.net`) e **Salvar**. Aparece o QR de pareamento.
+5. Teste: no navegador do celular (Tailscale ligado), abra `https://SEU-NOME.ts.net/`: se aparecer "Chave inválida ou ausente", o caminho está funcionando.
 
-O leitor do app é uma versão simplificada: rolagem contínua, dois cliques para mostrar a barra (voltar à obra, alternar original/tradução, capítulo anterior/próximo), volta de onde parou. Não tem a barra de progresso lateral nem edição.
+**2. Gerar o APK (na nuvem do GitHub, sem Android Studio)**
+1. Suba o projeto (veja "Publicar no GitHub" abaixo). Em **Actions → Compilar APK** o fluxo roda sozinho (ou **Run workflow**). Leva alguns minutos.
+2. *Recomendado:* gere a chave de assinatura uma vez para poder **atualizar o app por cima** sem perder as obras baixadas: na pasta `android-app`, rode `pip install cryptography` e `python scripts/gerar_chave_apk.py`. Copie o conteúdo de `chave-apk.base64.txt` para **Settings → Secrets and variables → Actions → New repository secret** com o nome `KEYSTORE_BASE64`; guarde o arquivo num backup e apague-o da pasta. Sem esse segredo o APK sai com chave temporária e, a cada versão nova, é preciso desinstalar o app antes (as baixadas se perdem).
+3. Quando o fluxo ficar verde, abra a página **Releases** do repositório no celular, baixe `BaixadorLeitor.apk` e instale (o Android pede para permitir "instalar apps desta fonte").
 
-**Publicar no GitHub (PowerShell, na pasta do projeto)**
+**3. Usar**
+- **Conectar:** toque em **Escanear QR do notebook** (ou cole o código). A chave fica guardada só neste aparelho.
+- **Notebook (online):** lista as obras do notebook com capa. Dentro da obra, marque capítulos (**Todos**, **Não baixados**, **Limpar**) e escolha **Baixar para ler offline** (guarda no app) ou **Salvar ZIP no celular** (um ZIP por capítulo em `Download/Baixador/<Obra>/`, que o app também importa depois em **Ajustes → Importar ZIP**).
+- **Baixadas:** lê sem internet e sem o notebook; excluir capítulo/obra libera espaço. O leitor tem tradução sobreposta, alternar original/tradução e capítulo anterior/próximo (dois cliques mostram a barra) e volta de onde você parou.
+- **Fora de casa:** deixe o **Tailscale ligado no celular** e o notebook **ligado, conectado e sem suspender** (Configurações de energia do Windows). O Android reserva o espaço de VPN para o Tailscale (não dá para usar outra VPN ao mesmo tempo).
+
+**Segurança:** só aparelhos da sua conta Tailscale chegam ao servidor, e ainda é preciso a chave do QR (que **Trocar chave** invalida). O servidor só lê a biblioteca; não escreve, apaga ou traduz nada. Chaves de IA (Gemini/OpenRouter) ficam só no `.env` do notebook e nunca vão ao celular.
+
+**Limites conhecidos:** em redes de operadora com CGNAT o Tailscale usa um relé e o download pode ser mais lento; o app não se atualiza sozinho (instale o APK novo por cima); o leitor do app é simplificado (sem barra de progresso lateral nem edição); testei o servidor e o app em navegador com HTTPS local, mas o APK em si só pode ser validado no seu celular.
+
+## Publicar no GitHub (PowerShell, na pasta do projeto)
+
+O `.gitignore` bloqueia `.env`, `obras/`, `dados/`, `*.zip`, chaves e builds. As obras nunca sobem.
 ```powershell
 git init
 git add .
 git status      # CONFIRA: .env e obras/ NÃO podem aparecer na lista
-git commit -m "Baixador de imagens + app do celular"
+git commit -m "Baixador de imagens + app Android"
 git branch -M main
 git remote add origin https://github.com/SEU-USUARIO/baixador-imagens.git
 git push -u origin main
 ```
-Depois, no GitHub: **Settings → Pages → Build and deployment → Source: GitHub Actions**. Na aba **Actions**, o fluxo "Publicar app" roda sozinho e o endereço do app aparece nas configurações do Pages (`https://SEU-USUARIO.github.io/baixador-imagens/`). A cada `git push` que mude `app/`, a versão nova é publicada.
-
-- No plano gratuito o Pages exige repositório **público**: o código fica público (não há chaves nele; as chaves ficam só no `.env`, ignorado). Se preferir esconder o código, crie um repositório público separado só com o conteúdo de `app/` (no workflow, troque `path: app` por `path: .`).
-- Se você **já commitou** o `.env` ou `obras/` alguma vez, o `.gitignore` não os remove do histórico. Rode `git rm -r --cached .env obras dados` e, se já deu push, **gere novas chaves** (Gemini/OpenRouter), pois o histórico guarda as antigas.
-- Teste local do app: `python -m http.server 8080 --directory app` e abra `http://localhost:8080` (localhost conta como seguro).
+- O repositório pode ser **privado**: o fluxo funciona igual e você baixa o APK na página Releases já logado no GitHub (no celular, entre no GitHub pelo navegador antes). Em repositório público qualquer pessoa com o link baixaria o APK (ele não contém chaves, só o app).
+- Se você **já commitou** o `.env` ou `obras/` alguma vez, o `.gitignore` não os remove do histórico: rode `git rm -r --cached .env obras dados` e, se já deu push, **gere novas chaves** (Gemini/OpenRouter).
+- O projeto não usa GitHub Pages nem PWA em nenhuma parte. O GitHub serve apenas para guardar o código e, pelo Actions, compilar o APK (publicado em Releases).

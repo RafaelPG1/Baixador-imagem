@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#10151c">
+<meta name="referrer" content="no-referrer">
+<title>Baixador Leitor</title>
+<link rel="stylesheet" href="app.css">
+<script>window.APP_VERSAO = '__VERSAO__';</script>
+</head>
+<body>
+<header class="topo" id="topo">
+  <a class="marca" href="#/">Leitor</a>
+  <span class="estado" id="estado" role="status"></span>
+</header>
+<main id="tela"></main>
+<nav class="abas" id="abas" aria-label="Seções">
+  <a href="#/" data-aba="online">Notebook</a>
+  <a href="#/baixadas" data-aba="baixadas">Baixadas</a>
+  <a href="#/ajustes" data-aba="ajustes">Ajustes</a>
+</nav>
+<div id="toast" class="toast" hidden role="status"></div>
+<input id="arquivos" type="file" accept=".zip,application/zip" multiple hidden>
+<script src="zip.js"></script>
+<script src="ajuste.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
