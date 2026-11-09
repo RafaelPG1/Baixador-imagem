@@ -230,7 +230,7 @@
       try {
         var c = lerPareamento(texto);
         var t0 = Date.now(), r = await fetchAuth('/api/app/ping', { cfg: c, limite: 15000 }), j = await r.json();
-        guardar(CHAVE_CFG, JSON.stringify(c));
+        guardar(CHAVE_CFG, JSON.stringify(c)); cacheOnline = null; try { sessionStorage.removeItem('baixador-online'); } catch (_) {}
         aviso('Conectado: ' + j.obras + ' obra(s) no notebook (' + (Date.now() - t0) + ' ms).'); location.hash = '#/';
       } catch (e) {
         msg.className = 'msg'; msg.textContent = mensagemErro(e);
@@ -250,7 +250,12 @@
 
   /* ---------------- tela: obras no notebook (online) ---------------- */
   var cacheOnline = null;
-  async function carregarOnline() { var r = await fetchAuth('/api/biblioteca'); cacheOnline = await r.json(); return cacheOnline; }
+  async function carregarOnline() {
+    var r = await fetchAuth('/api/biblioteca'); cacheOnline = await r.json();
+    try { sessionStorage.setItem('baixador-online', JSON.stringify(cacheOnline)); } catch (_) {}
+    return cacheOnline;
+  }
+  try { cacheOnline = JSON.parse(sessionStorage.getItem('baixador-online') || 'null'); } catch (_) { cacheOnline = null; }   // voltar do leitor não refaz a espera
 
   function erroOnline(tela, e) {
     tela.replaceChildren();
@@ -262,6 +267,16 @@
     acoes.append(de_novo, off, rec); tela.append(v, acoes);
   }
 
+  var atualizacaoVerificada = false;
+  function avisoAtualizacao(eu, tela) {                         // uma conferência por abertura do app; só aparece se houver versão nova de verdade
+    function pintar() {
+      if (!atualizacaoNova || !vivo(eu) || tela.querySelector('.aviso-atualizar')) return;
+      var a = el('a', 'btn principal aviso-atualizar', 'Atualização disponível (versão ' + atualizacaoNova.versao + '). Toque para instalar.'); a.href = '#/ajustes'; tela.prepend(a);
+    }
+    if (atualizacaoVerificada) { pintar(); return; }
+    atualizacaoVerificada = true;
+    verificarAtualizacao().then(pintar, function () {});
+  }
   async function telaOnline(eu) {
     var tela = $('tela'); marcarAba('online');
     if (!cfg()) { location.hash = '#/conectar'; return; }
@@ -270,6 +285,7 @@
     if (!vivo(eu)) return;
     var locais = await todos('caps'); if (!vivo(eu)) return;
     tela.replaceChildren();
+    avisoAtualizacao(eu, tela);
     if (!dados.obras.length) { tela.append(vazio('O notebook ainda não tem obras', 'Baixe capítulos no programa e volte aqui.')); return; }
     var grade = el('div', 'capas');
     dados.obras.forEach(function (o) {
@@ -312,11 +328,12 @@
       if (loc) { var novo = !(loc.traduzido || !c.traduzido); t.append(el('span', novo ? 'tag novo' : 'tag ok', novo ? 'tradução nova' : 'baixado')); }
     }
     caps.forEach(function (c) {
-      var li = el('li', 'linha-sel'), lab = el('label', 'cap');
-      var cx = el('input'); cx.type = 'checkbox'; cx.setAttribute('aria-label', c.rotulo); caixas[c.rel] = cx;
+      var li = el('li', 'linha-sel'), marca = el('label', 'marca-cap');
+      var cx = el('input'); cx.type = 'checkbox'; cx.setAttribute('aria-label', 'Selecionar ' + (c.rotulo || c.rel)); caixas[c.rel] = cx; marca.append(cx);
+      var lab = el('a', 'cap'); lab.href = 'leitor.html?c=' + enc(c.rel); lab.setAttribute('aria-label', 'Ler ' + (c.rotulo || c.rel));
       var t = el('span', 'cap-t', c.rotulo || c.rel); titulos[c.rel] = t; pintarTag(c);
       var s = el('span', 'cap-s' + (c.traduzido ? ' ok' : ''), c.imagens + ' pág. · ' + (c.traduzido ? (c.incompleta ? 'tradução incompleta' : 'traduzido') : 'só original'));
-      lab.append(cx, t, s); li.append(lab); ul.append(li);
+      lab.append(t, s); li.append(marca, lab); ul.append(li);
       cx.addEventListener('change', function () { if (cx.checked) sel.add(c.rel); else sel.delete(c.rel); atualizar(); });
     });
     var fixa = el('div', 'fixa-baixo');
@@ -363,16 +380,17 @@
       var f = await rodar(async function (c, sinal, prg) { await salvarZip(obra, c, sinal, prg); });
       if (f) aviso(f + ' ZIP(s) salvo(s) em Download/Baixador/' + obra.nome + '.');
     });
-    tela.append(cab, barra, ul, fixa); atualizar();
+    tela.append(cab, el('p', 'nota', 'Toque no capítulo para ler agora (direto do notebook, sem baixar). Use as caixas para baixar ou salvar ZIP.'), barra, ul, fixa); atualizar();
   }
 
   /* Um ZIP por capítulo, em Download/Baixador/<obra>/ (nativo: direto no armazenamento, sem passar pela memória). */
   var ouvindoProgresso = false, progressoNativo = null;
+  function garantirOuvinte(SZ) { if (!ouvindoProgresso) { ouvindoProgresso = true; SZ.addListener('progresso', function (ev) { if (progressoNativo) progressoNativo(ev.recebido, ev.total); }); } }
   async function salvarZip(obra, c, sinal, prg) {
     var conf = cfg(), nome = (obra.nome + ' - ' + (c.rotulo || 'capitulo') + '.zip');
     var SZ = plugin('SalvarZip');
     if (SZ) {
-      if (!ouvindoProgresso) { ouvindoProgresso = true; SZ.addListener('progresso', function (ev) { if (progressoNativo) progressoNativo(ev.recebido, ev.total); }); }
+      garantirOuvinte(SZ);
       progressoNativo = prg;
       try { await SZ.salvar({ url: conf.base + '/api/app/exportar?rel=' + enc(c.rel), headers: { Authorization: 'Bearer ' + conf.chave }, pasta: obra.nome, nome: nome, id: c.rel }); }
       finally { progressoNativo = null; }
@@ -421,7 +439,7 @@
     var g = el('div', 'topo-acoes'); g.append(voltar, excluir); cab.append(g);
     var ul = el('ul', 'lista');
     caps.forEach(function (c) {
-      var li = el('li'); var a = el('a', 'cap'); a.href = '#/ler/' + enc(c.id);
+      var li = el('li'); var a = el('a', 'cap'); a.href = 'leitor.html?c=' + enc(c.id);
       var pos = lembrar('pos:' + c.id);
       a.append(el('span', 'cap-t', c.rotulo || c.id), el('span', 'cap-s' + (c.traduzido ? ' ok' : ''), c.paginas + ' pág. · ' + (c.traduzido ? 'traduzido' : 'só original') + (pos ? ' · parou na pág. ' + (Number(pos) + 1) : '')));
       var x = el('button', 'x', '✕'); x.type = 'button'; x.setAttribute('aria-label', 'Excluir ' + (c.rotulo || c.id)); x.title = 'Excluir este capítulo do celular';
@@ -434,63 +452,55 @@
     tela.append(cab, ul);
   }
 
-  async function telaLeitor(eu, id) {
-    var tela = $('tela'), cap = await obter('caps', id);
-    if (!vivo(eu)) return;
-    if (!cap) { aviso('Capítulo não encontrado.'); location.hash = '#/baixadas'; return; }
-    var irmaos = ordenar((await todos('caps')).filter(function (c) { return c.obra === cap.obra; })), pos = irmaos.findIndex(function (c) { return c.id === id; });
-    var ant = irmaos[pos - 1], prox = irmaos[pos + 1];
-    var blobs = {}; (await todos('imgs', faixaCap(id))).forEach(function (r) { blobs[r.chave] = r.blob; });
-    if (!vivo(eu)) return;
-    document.body.classList.add('leitor'); document.body.classList.toggle('original', lembrar('idioma') === 'original');
-    tela.replaceChildren();
-    var paginas = el('div', 'paginas'); var figuras = [], carregadas = [];
-    cap.dados.imagens.forEach(function (im) {
-      var blob = blobs[id + '|' + im.arq]; if (!blob) return;
-      var fig = el('figure'); fig.dataset.n = String(figuras.length);
-      if (im.medidas && im.blocos.length) { fig.className = 'com-medidas'; fig.style.aspectRatio = im.medidas[0] + '/' + im.medidas[1]; fig.dataset.w = im.medidas[0]; fig.dataset.h = im.medidas[1]; }
-      var img = el('img'); img.alt = 'Página ' + (figuras.length + 1); img.decoding = 'async'; img.src = url(blob);
-      carregadas.push(new Promise(function (ok) { img.onload = img.onerror = ok; }));
-      fig.append(img);
-      im.blocos.forEach(function (b) {
-        var t = el('div', 'tr'); t.title = b.original || '';
-        t.style.left = b.x + '%'; t.style.top = b.y + '%'; t.style.width = b.w + '%'; t.style.height = b.h + '%'; t.style.background = b.fundo; t.style.color = b.cor;
-        if (b.fonte > 0) t.dataset.f = b.fonte; if (b.refer > 0) t.dataset.r = b.refer; if (b.livre) t.dataset.lv = JSON.stringify(b.livre);
-        t.textContent = b.texto; fig.append(t);
-      });
-      paginas.append(fig); figuras.push(fig);
+  /* ---------------- atualização do app (o notebook busca o APK novo no GitHub e entrega; o Android pede a confirmação) ---------------- */
+  var atualizacaoNova = null;                                   // {versao, nome, tamanho} quando há APK mais novo que este
+  function versaoInstalada() { var m = /(\d+)\s*$/.exec(String(window.APP_VERSAO || '')); return m ? parseInt(m[1], 10) : null; }
+  async function verificarAtualizacao() {
+    var r = await fetchAuth('/api/app/atualizacao', { limite: 45000 }), j = await r.json(), atual = versaoInstalada();
+    if (!j.disponivel) return { novo: false, motivo: j.motivo || 'Sem informação de atualização.' };
+    var novo = atual !== null && j.versao > atual;
+    atualizacaoNova = novo ? j : null;
+    return { novo: novo, info: j, atual: atual };
+  }
+  async function instalarAtualizacao(aoProgredir) {
+    var SZ = plugin('SalvarZip'), conf = cfg();
+    if (!SZ || !SZ.instalarApk) throw new Error('A instalação só funciona no app instalado no celular.');
+    garantirOuvinte(SZ); progressoNativo = aoProgredir;
+    try { await SZ.instalarApk({ url: conf.base + '/api/app/apk', headers: { Authorization: 'Bearer ' + conf.chave }, id: 'apk' }); }
+    catch (e) {
+      if (e && (e.message === 'permissao' || e === 'permissao')) throw new Error('Libere “Instalar apps desconhecidos” para o Baixador Leitor na tela que abriu, volte ao app e toque em Baixar e instalar de novo.');
+      throw e;
+    } finally { progressoNativo = null; }
+  }
+  function blocoAtualizacao() {
+    var b = el('section', 'bloco'); b.append(el('h2', '', 'Atualização do app'));
+    var inst = versaoInstalada();
+    b.append(el('p', 'nota', 'Versão instalada: ' + (inst === null ? 'de desenvolvimento' : window.APP_VERSAO) + '. Para ter uma versão nova: compile no GitHub (Actions → Compilar APK) e depois toque aqui. O notebook precisa estar ligado e com internet.'));
+    var res = el('p', 'msg'); res.setAttribute('role', 'status');
+    var linha = el('div', 'linha'), procurar = el('button', 'btn', 'Procurar atualização'); procurar.type = 'button';
+    var instalar = el('button', 'btn principal', 'Baixar e instalar'); instalar.type = 'button'; instalar.hidden = true;
+    var prog = el('progress'); prog.hidden = true; prog.max = 1; prog.value = 0;
+    function mostrarNova(j) { instalar.hidden = false; instalar.textContent = 'Baixar e instalar a versão ' + j.versao + (j.tamanho ? ' (' + mb(j.tamanho) + ')' : ''); res.className = 'msg ok'; res.textContent = 'Há uma versão nova: ' + (j.nome || j.versao) + '.'; }
+    if (atualizacaoNova) mostrarNova(atualizacaoNova);
+    procurar.addEventListener('click', async function () {
+      if (!cfg()) { res.className = 'msg'; res.textContent = 'Conecte ao notebook primeiro.'; return; }
+      procurar.disabled = true; instalar.hidden = true; res.className = 'msg'; res.textContent = 'Perguntando ao notebook (ele consulta o GitHub)…';
+      try {
+        var r = await verificarAtualizacao();
+        if (r.novo) mostrarNova(r.info);
+        else if (r.motivo) { res.textContent = r.motivo; }
+        else { res.className = 'msg ok'; res.textContent = r.atual === null ? 'Versão de desenvolvimento: não dá para comparar. Última no GitHub: ' + r.info.nome + '.' : 'Você já está na versão mais recente (' + r.info.nome + ').'; }
+      } catch (e) { res.className = 'msg'; res.textContent = mensagemErro(e); } finally { procurar.disabled = false; }
     });
-    var barra = el('nav', 'leitor-barra'); barra.hidden = true; barra.setAttribute('aria-label', 'Controles do leitor');
-    var esq = el('div', 'grupo'), dir = el('div', 'grupo');
-    var obraB = el('a', 'btn', '‹ Obra'); obraB.href = '#/obra/' + enc(cap.obra);
-    var idioma = el('button', 'btn', 'Original'); idioma.type = 'button'; idioma.setAttribute('aria-pressed', String(document.body.classList.contains('original')));
-    idioma.disabled = !cap.traduzido; idioma.title = 'Alternar entre a tradução e a imagem original';
-    idioma.addEventListener('click', function () { var o = document.body.classList.toggle('original'); idioma.setAttribute('aria-pressed', String(o)); guardar('idioma', o ? 'original' : 'traduzido'); });
-    var link = function (txt, c, rot) { var a = el('a', 'btn', txt); a.setAttribute('aria-label', rot); if (c) a.href = '#/ler/' + enc(c.id); else a.setAttribute('aria-disabled', 'true'); return a; };
-    var ind = el('span', 'pos', '1/' + figuras.length);
-    esq.append(obraB, idioma); dir.append(link('‹', ant, 'Capítulo anterior'), ind, link('›', prox, 'Próximo capítulo'));
-    barra.append(esq, dir);
-    var fim = el('p', 'fim', 'Fim de “' + cap.dados.titulo + '” — ' + figuras.length + ' página(s).');
-    var nav = el('nav', 'navcap'); nav.setAttribute('aria-label', 'Capítulos');
-    var v = el('a', 'btn', '‹ Obra'); v.href = obraB.getAttribute('href'); nav.append(v);
-    if (prox) { var p = el('a', 'btn principal', 'Próximo ›'); p.href = '#/ler/' + enc(prox.id); nav.append(p); }
-    tela.append(barra, paginas, fim, nav);
-    if (window.AjusteTexto) window.AjusteTexto.ajustarTudo();
-    if ('ResizeObserver' in window) new ResizeObserver(function () { window.AjusteTexto.ajustarTudo(); }).observe(paginas);
-    paginas.addEventListener('dblclick', function () { barra.hidden = !barra.hidden; });
-    var atual = 0, agendado = false;
-    function marcarPos() {
-      agendado = false; var ref = window.innerHeight * 0.3, k = 0;
-      for (var i = 0; i < figuras.length; i++) { if (figuras[i].getBoundingClientRect().top <= ref) k = i; else break; }
-      if (k !== atual || !ind.dataset.ok) { atual = k; ind.dataset.ok = '1'; ind.textContent = (k + 1) + '/' + figuras.length; guardar('pos:' + id, String(k)); }
-    }
-    window.onscroll = function () { if (!agendado) { agendado = true; requestAnimationFrame(marcarPos); } };
-    var salvo = parseInt(lembrar('pos:' + id), 10);
-    if (salvo > 0 && salvo < figuras.length) {          // volta de onde parou, depois que as imagens de cima têm altura
-      Promise.race([Promise.all(carregadas.slice(0, salvo + 1)), new Promise(function (ok) { setTimeout(ok, 4000); })]).then(function () {
-        window.AjusteTexto.ajustarTudo(); figuras[salvo].scrollIntoView(); marcarPos();
-      });
-    } else window.scrollTo(0, 0);
+    instalar.addEventListener('click', async function () {
+      procurar.disabled = instalar.disabled = true; prog.hidden = false; prog.value = 0; res.className = 'msg'; res.textContent = 'O notebook está buscando o APK no GitHub (só na primeira vez) e enviando ao celular…';
+      try {
+        await instalarAtualizacao(function (rec, tot) { prog.max = tot || 1; prog.value = tot ? rec : 0; res.textContent = 'Baixando… ' + (tot ? Math.round(rec / tot * 100) + '%' : mb(rec)); });
+        res.className = 'msg ok'; res.textContent = 'Pronto: confirme “Atualizar” na tela do Android. Suas obras baixadas continuam no celular.';
+      } catch (e) { res.className = 'msg'; res.textContent = mensagemErro(e); } finally { procurar.disabled = instalar.disabled = false; prog.hidden = true; }
+    });
+    linha.append(procurar, instalar); b.append(res, prog, linha);
+    return b;
   }
 
   /* ---------------- tela: ajustes ---------------- */
@@ -510,7 +520,7 @@
         catch (e) { res.className = 'msg'; res.textContent = mensagemErro(e); } finally { testar.disabled = false; }
       });
       var desc = el('button', 'btn perigo', 'Desconectar'); desc.type = 'button';
-      desc.addEventListener('click', function () { if (!confirm('Desconectar deste notebook? As obras já baixadas continuam no celular.')) return; esquecer(CHAVE_CFG); cacheOnline = null; setEstado(false, ''); aviso('Desconectado.'); rotear(); });
+      desc.addEventListener('click', function () { if (!confirm('Desconectar deste notebook? As obras já baixadas continuam no celular.')) return; esquecer(CHAVE_CFG); cacheOnline = null; try { sessionStorage.removeItem('baixador-online'); } catch (_) {} setEstado(false, ''); aviso('Desconectado.'); rotear(); });
       linha.append(testar, desc);
     }
     var par = el('a', 'btn' + (c ? '' : ' principal'), c ? 'Parear de novo' : 'Conectar'); par.href = '#/conectar'; linha.append(par);
@@ -533,9 +543,9 @@
     l2.append(imp, apagar); bDados.append(el('p', 'nota', 'Os ZIPs salvos em Download/Baixador não são apagados por aqui.'), l2);
 
     var bSobre = el('section', 'bloco'); bSobre.append(el('h2', '', 'Sobre'));
-    bSobre.append(el('p', 'nota', 'Versão ' + (window.APP_VERSAO === '__VERSAO__' ? 'de desenvolvimento' : window.APP_VERSAO) + '. Para atualizar o app, instale o APK novo por cima (suas obras baixadas continuam).'));
+    bSobre.append(el('p', 'nota', 'Versão ' + (window.APP_VERSAO === '__VERSAO__' ? 'de desenvolvimento' : window.APP_VERSAO) + '.'));
     bSobre.append(el('p', 'nota', 'Fora de casa: deixe o Tailscale ligado no celular e o notebook ligado, conectado e sem suspender.'));
-    if (vivo(eu)) tela.append(bConexao, bArm, bDados, bSobre);
+    if (vivo(eu)) tela.append(bConexao, blocoAtualizacao(), bArm, bDados, bSobre);
   }
 
   /* ---------------- rotas ---------------- */
@@ -547,7 +557,7 @@
       else if (p[1] === 'online' && resto) await telaOnlineObra(eu, resto);
       else if (p[1] === 'baixadas') await telaBaixadas(eu);
       else if (p[1] === 'obra' && resto) await telaObra(eu, resto);
-      else if (p[1] === 'ler' && resto) await telaLeitor(eu, resto);
+      else if (p[1] === 'ler' && resto) { location.replace('leitor.html?c=' + enc(resto)); return; }   // rota antiga: o leitor agora é a página leitor.html
       else if (p[1] === 'ajustes') await telaAjustes(eu);
       else if (!cfg()) { var n = (await todos('caps')).length; location.hash = n ? '#/baixadas' : '#/conectar'; }
       else if (navigator.onLine === false) { location.hash = '#/baixadas'; }
@@ -560,7 +570,15 @@
     var lista = Array.prototype.slice.call(ev.target.files || []); ev.target.value = '';
     if (lista.length) { aviso('Importando… não feche o app.'); importarArquivos(lista); }
   });
-  document.addEventListener('keydown', function (ev) { if (ev.key === 'Escape') { var b = document.querySelector('.leitor-barra'); if (b) b.hidden = true; } });
   window.addEventListener('beforeunload', soltarUrls);
+  /* O leitor (cópia da web) manda para "/leitor?c=…" e "/?obra=…": no app, a primeira é a página leitor.html e a segunda, a tela da obra. */
+  (function () {
+    var q = new URLSearchParams(location.search);
+    if (location.pathname === '/leitor') { location.replace('leitor.html' + location.search); return; }
+    if (q.get('obra')) {
+      history.replaceState(null, '', location.pathname);
+      location.hash = (cfg() && navigator.onLine !== false ? '#/online/' : '#/obra/') + encodeURIComponent(q.get('obra'));
+    }
+  })();
   rotear();
 })();

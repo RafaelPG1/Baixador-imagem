@@ -277,6 +277,22 @@ class _Manipulador(BaseHTTPRequestHandler):
             arquivo, tamanho, nome = pronto
             with arquivo:
                 return exportar.transmitir(self, arquivo, tamanho, nome)
+        if caminho == "/api/app/atualizacao":                  # o app pergunta se há APK novo (o notebook consulta o GitHub)
+            if servidor.atualizador is None:
+                return self._json(200, {"disponivel": False, "motivo": "Atualização não configurada neste notebook."})
+            return self._json(200, servidor.atualizador.para_o_app())
+        if caminho == "/api/app/apk":                          # o APK da última release (baixado do GitHub pelo notebook, uma vez)
+            if servidor.atualizador is None:
+                return self._json(404, {"erro": "Atualização não configurada neste notebook."})
+            apk, motivo = servidor.atualizador.arquivo_apk()
+            if apk is None:
+                return self._json(502, {"erro": motivo})
+            try:
+                with open(apk, "rb") as arquivo:
+                    return exportar.transmitir(self, arquivo, apk.stat().st_size, "BaixadorLeitor.apk",
+                                               tipo="application/vnd.android.package-archive")
+            except OSError:
+                return self._json(404, {"erro": "APK indisponível."})
         if caminho == "/api/biblioteca":
             return self._json(200, biblioteca.listar(servidor.raiz))
         if caminho == "/api/versao":
@@ -311,6 +327,7 @@ class ServidorCelular(ServidorSilencioso):
     def __init__(self, raiz: Path, chave: str, porta: int = PORTA_PADRAO, endereco: str = "0.0.0.0"):
         self.raiz = Path(raiz)
         self.chave = chave
+        self.atualizador: Any = None                           # atualização do app (atualizacao.Atualizador), se houver
         self.hosts_extras: set = set()                         # nomes aceitos além do IP local (ex.: o *.ts.net do Tailscale)
         self._erros: Dict[str, List[float]] = {}
         self._trava = threading.Lock()
@@ -335,9 +352,10 @@ class ServidorCelular(ServidorSilencioso):
 class ControleCelular:
     """Liga/desliga o servidor do celular e guarda a chave. É o único ponto que o app do notebook usa."""
 
-    def __init__(self, raiz: Path, arquivo: Optional[Path] = None):
+    def __init__(self, raiz: Path, arquivo: Optional[Path] = None, atualizador: Any = None):
         self.raiz = Path(raiz)
         self.arquivo = arquivo
+        self.atualizador = atualizador
         self._servidor: Optional[ServidorCelular] = None
         self._thread: Optional[threading.Thread] = None
         self._trava = threading.Lock()
@@ -391,6 +409,7 @@ class ControleCelular:
                 self.erro = ""
                 self.porta = servidor.porta
                 servidor.hosts_extras = {self.tailscale} if self.tailscale else set()
+                servidor.atualizador = self.atualizador
                 self._servidor = servidor
                 self._thread = threading.Thread(target=servidor.serve_forever, daemon=True, kwargs={"poll_interval": 0.3})
                 self._thread.start()

@@ -90,6 +90,8 @@ body.leitor #abas, body.conectar #abas { display: none; }
 .msg { min-height: 1.4em; color: var(--perigo); font-size: .92rem; }
 .msg.ok { color: #7bd88f; }
 .lista li.linha-sel { align-items: center; }
+.marca-cap { display: grid; place-items: center; flex: none; width: 54px; min-height: 56px; cursor: pointer; }
+.marca-cap input { width: 22px; height: 22px; margin: 0; accent-color: var(--acento); }
 .lista label.cap { cursor: pointer; grid-template-columns: 28px 1fr; align-items: center; gap: 4px 12px; }
 .lista label.cap input { width: 22px; height: 22px; margin: 0; accent-color: var(--acento); grid-row: span 2; }
 .tag { display: inline-block; margin-left: 6px; padding: 0 7px; border-radius: 999px; border: 1px solid var(--borda); font-size: .75rem; color: var(--suave); }

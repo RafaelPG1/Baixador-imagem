@@ -1,5 +1,6 @@
 /* Aba "Leitura pelo celular": liga o servidor somente leitura e mostra o QR code com a chave. */
 let celular = {ligado: false};
+let celularVisto = false;
 
 function desenharQR(url) {
   const alvo = $('qr');
@@ -9,27 +10,25 @@ function desenharQR(url) {
   alvo.replaceChildren(svg);
 }
 
-function desenharQRApp(url) {
-  const alvo = $('qr-app');
-  if (!url) { alvo.replaceChildren(); return; }
-  const qr = qrcode(0, 'M'); qr.addData(url); qr.make();
-  alvo.replaceChildren(new DOMParser().parseFromString(qr.createSvgTag({cellSize: 4, margin: 0, scalable: true}), 'image/svg+xml').documentElement);
-}
-
 function aplicarCelular(e) {
   celular = e;
+  if (!celularVisto) { celularVisto = true; $('cel-app').open = !e.tailscale; }   // configuração aberta só enquanto falta o Tailscale
+  const temApp = !!e.url_app, temLocal = !!e.url;
   $('cel-comando').textContent = e.comando_tailscale || '';
   if (document.activeElement !== $('cel-ts')) $('cel-ts').value = e.tailscale || '';
-  $('cel-app-ok').hidden = !e.url_app;
+  $('cel-app-ok').hidden = !temApp;
   $('cel-app-url').textContent = e.url_app || '';
-  desenharQRApp(e.url_app || '');
-  $('cel-app-msg').textContent = e.tailscale && !e.ligado ? 'Ligue o acesso do celular (botão acima) para gerar o QR do app.' : '';
-  $('cel-ligar').hidden = e.ligado; $('cel-desligar').hidden = !e.ligado;
-  $('cel-ligado').hidden = !e.ligado || !e.url;
-  $('cel-sem-rede').hidden = !(e.ligado && !e.url);
-  $('cel-lembrar').checked = !!e.ligar_ao_abrir;
+  $('cel-local').hidden = !temLocal;
   $('cel-url').textContent = e.url || '';
-  desenharQR(e.ligado ? e.url : '');
+  // Um só QR: o do Tailscale quando configurado (serve ao app e ao navegador, de qualquer lugar); senão o do Wi-Fi de casa.
+  $('cel-qr-legenda').textContent = temApp ? 'O QR abaixo abre o app ou o navegador pelo Tailscale, de qualquer lugar.'
+    : 'O QR abre a leitura no navegador, com o celular no mesmo Wi-Fi. Para usar o app e ler de qualquer lugar, configure o Tailscale abaixo.';
+  $('cel-app-msg').textContent = e.tailscale && !e.ligado ? 'Ligue o acesso do celular (botão acima) para gerar o QR.' : '';
+  $('cel-ligar').hidden = e.ligado; $('cel-desligar').hidden = !e.ligado;
+  $('cel-ligado').hidden = !e.ligado || !(temApp || temLocal);
+  $('cel-sem-rede').hidden = !(e.ligado && !temApp && !temLocal);
+  $('cel-lembrar').checked = !!e.ligar_ao_abrir;
+  desenharQR(e.ligado ? (e.url_app || e.url) : '');
   $('cel-msg').textContent = e.erro || '';
   $('chip-celular').className = 'chip' + (e.ligado ? ' ok' : '');
   $('chip-celular').textContent = e.ligado ? 'Celular ligado' : 'Celular desligado';

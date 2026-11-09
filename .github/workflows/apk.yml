@@ -5,7 +5,7 @@ name: Compilar APK
 on:
   push:
     branches: [main, master]
-    paths: ['android-app/**', '.github/workflows/apk.yml']
+    paths: ['android-app/**', 'web/leitor/**', '.github/workflows/apk.yml']
   workflow_dispatch:
 
 permissions:
@@ -42,6 +42,9 @@ jobs:
 
       - name: Dependências
         run: npm ci
+
+      - name: Leitor da web dentro do app
+        run: python3 scripts/copiar_leitor.py
 
       - name: Versão no app
         run: sed -i "s/__VERSAO__/1.0.${{ github.run_number }}/" www/index.html

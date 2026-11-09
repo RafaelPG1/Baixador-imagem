@@ -228,7 +228,7 @@
 <!-- ============================================================ CELULAR -->
 <section id="pg-celular" class="pagina" role="tabpanel" aria-labelledby="aba-celular" hidden>
   <div class="secao">
-    <div class="secao-cab"><h2>Leitura pelo celular</h2><span class="suave">Somente leitura, só no Wi-Fi de casa. A biblioteca continua neste notebook.</span></div>
+    <div class="secao-cab"><h2>Leitura pelo celular</h2><span class="suave">Somente leitura. A biblioteca continua neste notebook.</span></div>
     <div class="celular-grade">
       <div class="qr" id="qr" aria-label="QR code para abrir a leitura no celular"><span class="nota" id="qr-vazio">Desligado</span></div>
       <div class="secao">
@@ -238,37 +238,39 @@
         </div>
         <label class="marcar"><input type="checkbox" id="cel-lembrar"> Ligar automaticamente quando o programa abrir</label>
         <div id="cel-ligado" class="secao" hidden>
-          <ol class="passos">
-            <li>Conecte o celular no mesmo Wi-Fi do notebook.</li>
-            <li>Aponte a câmera para o QR code. A chave fica salva no celular.</li>
-            <li>Escolha a obra e leia. Capítulos novos aparecem sozinhos.</li>
-          </ol>
-          <div class="url-copia num" id="cel-url"></div>
+          <p class="nota" id="cel-qr-legenda"></p>
+          <div id="cel-app-ok" class="secao" hidden>
+            <h3>App Android e navegador, de qualquer lugar (Tailscale)</h3>
+            <p class="nota">No app: toque em Conectar e aponte a câmera para o QR (ou cole o código). No navegador do celular: abra este endereço. Precisa do Tailscale ligado no celular.</p>
+            <div class="url-copia num" id="cel-app-url"></div>
+            <div class="acoes"><button type="button" id="cel-app-copiar" class="btn pequeno">Copiar código</button></div>
+          </div>
+          <div id="cel-local" class="secao" hidden>
+            <h3>Navegador, só no Wi-Fi de casa</h3>
+            <p class="nota">Celular no mesmo Wi-Fi do notebook. Sem Tailscale e sem app.</p>
+            <div class="url-copia num" id="cel-url"></div>
+            <div class="acoes">
+              <button type="button" id="cel-copiar" class="btn pequeno">Copiar endereço</button>
+            </div>
+          </div>
           <div class="acoes">
-            <button type="button" id="cel-copiar" class="btn pequeno">Copiar endereço</button>
             <button type="button" id="cel-trocar" class="btn pequeno perigo" title="Gera outra chave. O QR antigo e os celulares já autorizados deixam de funcionar">Trocar chave</button>
           </div>
         </div>
         <p id="cel-msg" class="msg" role="alert"></p>
-        <div id="cel-sem-rede" class="faixa aviso" hidden>Não achei o endereço do notebook na rede. Conecte-se ao Wi-Fi e tente de novo.</div>
-        <div id="cel-app" class="secao">
-          <h3>App Android (acesso de qualquer lugar, pelo Tailscale)</h3>
+        <div id="cel-sem-rede" class="faixa aviso" hidden>Não achei o endereço do notebook na rede. Conecte-se ao Wi-Fi ou configure o Tailscale abaixo.</div>
+        <details id="cel-app" class="secao">
+          <summary><strong>Configurar o Tailscale (uma vez)</strong></summary>
           <ol class="passos">
-            <li>Instale o Tailscale neste notebook e no celular, entrando com a mesma conta. No painel do Tailscale (login.tailscale.com), ative <strong>MagicDNS</strong> e <strong>HTTPS Certificates</strong>.</li>
-            <li>Aqui em cima, clique em <strong>Ligar acesso do celular</strong>. Depois rode este comando no PowerShell do notebook (uma vez):<div class="url-copia num" id="cel-comando"></div></li>
+            <li>Instale o Tailscale neste notebook e no celular, entrando com a mesma conta. No painel do Tailscale (login.tailscale.com), ative <strong>MagicDNS</strong> e <strong>HTTPS Certificates</strong>. No celular, se usar DNS privado, desative ou use “Automático”.</li>
+            <li>Clique em <strong>Ligar acesso do celular</strong>. Depois rode este comando no PowerShell do notebook (uma vez):<div class="url-copia num" id="cel-comando"></div></li>
             <li>Informe o nome do notebook no Tailscale (termina em <code>.ts.net</code>) ou clique em <strong>Detectar</strong>:
               <div class="acoes"><input type="text" id="cel-ts" class="campo" placeholder="notebook.tailXXXX.ts.net" autocomplete="off" spellcheck="false">
               <button type="button" id="cel-ts-salvar" class="btn pequeno">Salvar</button>
               <button type="button" id="cel-ts-detectar" class="btn pequeno">Detectar</button></div></li>
-            <li>No app, toque em <strong>Conectar</strong> e aponte a câmera para este QR (ou cole o código):</li>
           </ol>
-          <div id="cel-app-ok" hidden>
-            <div class="qr" id="qr-app" aria-label="QR code para parear o app Android"></div>
-            <div class="url-copia num" id="cel-app-url"></div>
-            <div class="acoes"><button type="button" id="cel-app-copiar" class="btn pequeno">Copiar código</button></div>
-          </div>
           <p id="cel-app-msg" class="msg" role="alert"></p>
-        </div>
+        </details>
         <p class="nota">No Windows, na primeira vez, o firewall pergunta se o Python pode receber conexões: permita em “Redes privadas”. O celular só consegue ler; nada pode ser baixado, editado ou apagado por ele.</p>
       </div>
     </div>

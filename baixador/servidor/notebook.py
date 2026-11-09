@@ -36,8 +36,9 @@ from baixador.servidor.base import (
 )
 from baixador.servidor import celular as celular_servidor
 from baixador.servidor.celular import ControleCelular
+from baixador.servidor.atualizacao import Atualizador
 from baixador.nucleo.erros import ErroBaixador
-from baixador.configuracao import ARQUIVO_CELULAR, PASTA_PADRAO, migrar_dados_antigos, migrar_pasta_biblioteca
+from baixador.configuracao import ARQUIVO_CELULAR, DADOS, PASTA_PADRAO, RAIZ, migrar_dados_antigos, migrar_pasta_biblioteca
 from baixador.nucleo.imagens import pasta_do_conjunto
 from baixador.biblioteca.capitulo import dados_do_capitulo, listar_imagens
 from baixador.navegador.manual import ESTADOS_ATIVOS, SessaoManual
@@ -938,7 +939,8 @@ def abrir_interface(abrir_navegador: bool = True) -> int:
     except Exception as erro:
         print(f"Aviso: não consegui unificar os glossários ({erro.__class__.__name__}); nada foi perdido.")
     token = secrets.token_urlsafe(24)
-    servidor = criar_servidor(token, celular=ControleCelular(PASTA_PADRAO, ARQUIVO_CELULAR))
+    atualizador = Atualizador(RAIZ, DADOS / "apk")
+    servidor = criar_servidor(token, celular=ControleCelular(PASTA_PADRAO, ARQUIVO_CELULAR, atualizador))
     endereco = f"http://127.0.0.1:{servidor.server_address[1]}/?t={token}"
     if servidor.celular.ligar_ao_abrir:  # type: ignore[attr-defined]
         try:

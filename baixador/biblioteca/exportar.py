@@ -107,14 +107,15 @@ def zip_temporario(raiz: Path, rels: List[str], obra: str = "") -> Optional[Tupl
     return arquivo, tamanho, (obra or (todos[0][0] if unico else "baixador")) + ".zip"
 
 
-def transmitir(handler: Any, arquivo: BinaryIO, tamanho: int, nome: str, extras: Optional[Dict[str, str]] = None) -> None:
+def transmitir(handler: Any, arquivo: BinaryIO, tamanho: int, nome: str, extras: Optional[Dict[str, str]] = None,
+               tipo: str = "application/zip") -> None:
     """Envia o ZIP em pedaços como download (`handler` é um BaseHTTPRequestHandler)."""
     seguro = "".join(ch if ch.isalnum() or ch in " ._-" else "_" for ch in nome).strip() or "baixador.zip"
     try:
         handler.send_response(200)
         for k, v in (extras or {}).items():
             handler.send_header(k, v)
-        handler.send_header("Content-Type", "application/zip")
+        handler.send_header("Content-Type", tipo)
         handler.send_header("Content-Length", str(tamanho))
         handler.send_header("Content-Disposition", f"attachment; filename=\"{seguro}\"; filename*=UTF-8''{quote(nome)}")
         handler.send_header("Cache-Control", "no-store")

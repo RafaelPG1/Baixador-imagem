@@ -32,6 +32,10 @@ Thumbs.db
 # ---- app Android ----
 android-app/node_modules/
 android-app/android/
+# cópias geradas de web/leitor (scripts/copiar_leitor.py)
+android-app/www/leitor.html
+android-app/www/leitor.js
+android-app/www/leitor.css
 chave-apk*
 *.keystore
 *.jks

@@ -1,2 +1,15 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Necessária para abrir o instalador com o APK da atualização (o usuário ainda precisa confirmar a instalação). -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <application>
+        <provider
+            android:name="com.baixador.salvar.ApkFileProvider"
+            android:authorities="${applicationId}.baixadorfp"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/baixador_file_paths" />
+        </provider>
+    </application>
 </manifest>

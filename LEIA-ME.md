@@ -172,7 +172,7 @@ obras\
 ## Leitura pelo celular
 
 1. Na aba **Leitura pelo celular**, clique em **Ligar acesso do celular**. (Opcional: marque ligar automaticamente.)
-2. Celular **no mesmo Wi-Fi**: aponte a câmera para o QR code. A chave fica salva no celular (cookie).
+2. Há **um só QR**. Com o Tailscale configurado (seção "App Android" abaixo), ele abre o app ou o navegador do celular **de qualquer lugar**; sem ele, abre no navegador com o celular **no mesmo Wi-Fi**. O link do Wi-Fi de casa (`http://IP:8765/?k=…`) continua na tela, com botão de copiar, para ler pelo navegador sem Tailscale. A chave fica salva no celular (cookie).
 3. Escolha a obra (capa e nome) e, na página dela, o capítulo. **Continuar** volta ao último capítulo lido (guardado no próprio celular). Capítulos novos
    baixados no notebook aparecem sozinhos.
 
@@ -182,8 +182,7 @@ Se o celular mostrar "Chave inválida ou ausente" depois de **Trocar chave**, es
 (tela apagada, Wi-Fi caindo) não geram mais erros no terminal.
 
 O celular **só lê**: o servidor dele só aceita GET, não tem rota de baixar, traduzir, editar ou reorganizar, e o
-leitor global chega sem o botão de edição. O acesso **fora de casa não está implementado** (se quiser, use uma VPN como
-Tailscale por conta própria).
+leitor global chega sem o botão de edição. Para acesso **fora de casa**, use o Tailscale (seção abaixo).
 
 ## Tradução (opcional, grátis, offline)
 
@@ -333,13 +332,15 @@ O app é um APK próprio (Capacitor), instalado como qualquer aplicativo, sem de
 
 **3. Usar**
 - **Conectar:** toque em **Escanear QR do notebook** (ou cole o código). A chave fica guardada só neste aparelho.
-- **Notebook (online):** lista as obras do notebook com capa. Dentro da obra, marque capítulos (**Todos**, **Não baixados**, **Limpar**) e escolha **Baixar para ler offline** (guarda no app) ou **Salvar ZIP no celular** (um ZIP por capítulo em `Download/Baixador/<Obra>/`, que o app também importa depois em **Ajustes → Importar ZIP**).
-- **Baixadas:** lê sem internet e sem o notebook; excluir capítulo/obra libera espaço. O leitor tem tradução sobreposta, alternar original/tradução e capítulo anterior/próximo (dois cliques mostram a barra) e volta de onde você parou.
+- **Notebook (online):** lista as obras do notebook com capa. Dentro da obra, **toque no capítulo para ler na hora, direto do notebook, sem baixar** (se o capítulo já estiver baixado, o app usa a cópia do celular). Para baixar, marque capítulos (**Todos**, **Não baixados**, **Limpar**) e escolha **Baixar para ler offline** (guarda no app) ou **Salvar ZIP no celular** (um ZIP por capítulo em `Download/Baixador/<Obra>/`, que o app também importa depois em **Ajustes → Importar ZIP**).
+- **Baixadas:** lê sem internet e sem o notebook; excluir capítulo/obra libera espaço. O app usa **o mesmo leitor da web** (copiado de `web/leitor/` na hora de compilar): barra de progresso lateral, botões flutuantes com dois cliques/toques, lista de capítulos, alternar original/tradução e capítulo anterior/próximo; o app ainda volta de onde você parou.
 - **Fora de casa:** deixe o **Tailscale ligado no celular** e o notebook **ligado, conectado e sem suspender** (Configurações de energia do Windows). O Android reserva o espaço de VPN para o Tailscale (não dá para usar outra VPN ao mesmo tempo).
 
 **Segurança:** só aparelhos da sua conta Tailscale chegam ao servidor, e ainda é preciso a chave do QR (que **Trocar chave** invalida). O servidor só lê a biblioteca; não escreve, apaga ou traduz nada. Chaves de IA (Gemini/OpenRouter) ficam só no `.env` do notebook e nunca vão ao celular.
 
-**Limites conhecidos:** em redes de operadora com CGNAT o Tailscale usa um relé e o download pode ser mais lento; o app não se atualiza sozinho (instale o APK novo por cima); o leitor do app é simplificado (sem barra de progresso lateral nem edição); testei o servidor e o app em navegador com HTTPS local, mas o APK em si só pode ser validado no seu celular.
+**Atualizar o app pelo próprio app:** compile uma versão nova no GitHub (**Actions → Compilar APK**), depois abra o app em **Ajustes → Atualização do app → Procurar atualização** e toque em **Baixar e instalar**. Quem busca o APK no GitHub é o **notebook** (guarda em `dados/apk/` e entrega ao celular pelo Tailscale), então o celular não precisa de acesso ao GitHub. O Android sempre pede a sua confirmação (**Atualizar**) e só aceita o APK com a **mesma assinatura**: por isso o segredo `KEYSTORE_BASE64` (passo 2 acima) é obrigatório para atualizar por cima. Na primeira vez o Android pede para liberar "Instalar apps desconhecidos" para o Baixador Leitor. O repositório vem do `.git/config` da pasta do projeto; se preferir, ponha `github_repo=dono/repositório` no `.env`. Se o repositório for **privado**, ponha também `github_token=…` (token com leitura de conteúdo do repositório) no `.env`; ele fica só no notebook.
+
+**Limites conhecidos:** em redes de operadora com CGNAT o Tailscale usa um relé e o download pode ser mais lento; o leitor do app não tem o modo de edição do notebook; se o seu celular usa **DNS privado** (Configurações → Rede → DNS privado), deixe em Automático ou desligado, senão o app não resolve o endereço `.ts.net`; testei o servidor e o app em navegador com HTTPS local, mas o APK em si só pode ser validado no seu celular.
 
 ## Publicar no GitHub (PowerShell, na pasta do projeto)
 
