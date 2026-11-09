@@ -12,7 +12,12 @@
   function aviso(t) { var a = $('toast'); a.textContent = t; a.hidden = false; clearTimeout(tempo); tempo = setTimeout(function () { a.hidden = true; }, 4500); }
   function mensagemErro(e) { return e && e.name === 'QuotaExceededError' ? 'sem espaço no celular (apague capítulos que já leu)' : (e && e.message) || String(e); }
   var nativo = !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
-  function plugin(nome) { return nativo ? window.Capacitor.registerPlugin(nome) : null; }
+  function plugin(nome) {
+    if (!nativo) return null;
+    var C = window.Capacitor;
+    if (C.Plugins && C.Plugins[nome]) return C.Plugins[nome];        // sem bundler, a ponte nativa expõe os plugins aqui
+    return typeof C.registerPlugin === 'function' ? C.registerPlugin(nome) : null;
+  }
 
   /* ---------------- banco local (obras baixadas) ---------------- */
   var _bd = null;
