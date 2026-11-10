@@ -19,6 +19,11 @@ MOTORES = {
     "openrouter": "OpenRouter (página inteira, na nuvem; envia só o texto)",
 }
 MODELO_PADRAO = "hf.co/tencent/Hy-MT2-7B-GGUF:Q4_K_M"
+MODELOS = {                                                  # modelos locais do Ollama oferecidos na aba Traduções (baixe com `ollama pull <nome>`)
+    MODELO_PADRAO: "Hy-MT2 7B (feito para tradução)",
+    "qwen3.5:4b": "Qwen 3.5 4B (geral, leve)",
+    "gemma4:e4b": "Gemma 4 E4B (geral, leve)",
+}
 _trava = threading.Lock()
 
 

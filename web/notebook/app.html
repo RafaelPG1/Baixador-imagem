@@ -203,6 +203,8 @@
     <fieldset class="tr-motor" id="tr-motor" aria-describedby="tr-motor-nota">
       <legend>Motor de tradução</legend>
       <div id="tr-motor-opcoes" class="tr-motor-opcoes"></div>
+      <p id="tr-uso" class="nota" role="status"></p>
+      <label class="nota">Modelo local (Ollama) para os motores Hy-MT2 e Híbrido: <select id="tr-modelo" aria-label="Modelo local do Ollama"></select></label>
       <p id="tr-motor-nota" class="nota">Vale para as próximas traduções; a que está em andamento termina com o motor com que começou. O Hy-MT2 roda no Ollama, neste computador. O Gemini usa a chave key_gemini e o OpenRouter a chave key_openrouter (modelo em modelo_openrouter), ambas no arquivo .env; os dois recebem só o texto extraído, nunca a imagem.</p>
       <div class="acoes"><button type="button" id="tr-hy-verificar" class="btn">Verificar o motor escolhido</button><button type="button" id="tr-refinar" class="btn" disabled title="Melhora com o Hy-MT2 os capítulos que já foram traduzidos pelo Argos">Refinar capítulos já traduzidos</button><span id="tr-hy-status" class="nota" role="status"></span></div>
     </fieldset>

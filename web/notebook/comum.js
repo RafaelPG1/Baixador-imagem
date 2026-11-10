@@ -71,11 +71,17 @@ const Motor = (() => {
     mudou();
     return cfg;
   }
+  async function escolherModelo(valor) {
+    try { cfg = await chamar('/api/traducao/config', {modelo: valor}); aviso('Modelo local salvo.'); }
+    catch (e) { aviso(e.message); }
+    mudou();
+    return cfg;
+  }
   /* Confere o que o motor escolhido precisa (Ollama + modelo; chave do Gemini). Sem rede para o Gemini, nunca trava a tela. */
   async function verificar(valor) {
     if (valor === 'argos') return {pronto: true, mensagem: ''};
     try { return await chamar(valor === 'gemini' ? '/api/traducao/gemini' : valor === 'openrouter' ? '/api/traducao/openrouter' : '/api/traducao/hy', {}); }
     catch (e) { return {pronto: false, mensagem: e.message}; }
   }
-  return {carregar, escolher, verificar, get atual() { return cfg; }};
+  return {carregar, escolher, escolherModelo, verificar, get atual() { return cfg; }};
 })();

@@ -91,7 +91,14 @@
       });
     }
     caixa.querySelectorAll('input').forEach((r) => { r.checked = r.value === cfg.motor; });
+    const sel = $('tr-modelo'), modelos = {...(cfg.modelos || {})};
+    if (cfg.modelo && !(cfg.modelo in modelos)) modelos[cfg.modelo] = cfg.modelo;
+    sel.replaceChildren(...Object.entries(modelos).map(([v, r]) => new Option(r, v)));
+    sel.value = cfg.modelo;
+    const rotulo = (cfg.motores || {})[cfg.motor] || cfg.motor, local = ['hibrido', 'hy', 'hy_pagina'].includes(cfg.motor);
+    $('tr-uso').textContent = 'Próximas traduções: ' + rotulo + (local ? ' · modelo local: ' + (modelos[cfg.modelo] || cfg.modelo) : cfg.motor === 'argos' ? ' (sem modelo de IA)' : ' (modelo definido no .env)');
   }
+  $('tr-modelo').addEventListener('change', async () => { await Motor.escolherModelo($('tr-modelo').value); if (['hibrido', 'hy', 'hy_pagina'].includes(Motor.atual.motor)) verificarHy(); });
   document.addEventListener('motor-mudou', (ev) => desenharMotores(ev.detail));
   async function verificarHy() {
     const st = $('tr-hy-status'), b = $('tr-hy-verificar'); b.disabled = true; st.textContent = 'Verificando…';

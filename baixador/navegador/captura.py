@@ -108,7 +108,7 @@ class Capturador:
             from playwright.sync_api import sync_playwright
         except ImportError:
             raise CapturaIndisponivel(
-                "O Playwright não está instalado (rode: python -m pip install -r requirements.txt)."
+                "O Playwright não está instalado. Na pasta do projeto, rode: python -m pip install -r requirements.txt"
             ) from None
 
         try:

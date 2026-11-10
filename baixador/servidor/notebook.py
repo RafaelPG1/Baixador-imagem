@@ -324,7 +324,7 @@ class Manipulador(BaseHTTPRequestHandler):
             return self._json(200, tarefa.instantaneo(max(self._numero(consulta, "log", 0), 0)))
 
         if caminho == "/api/traducao/config":
-            return self._json(200, {**config.ler(), "motores": config.MOTORES})
+            return self._json(200, {**config.ler(), "motores": config.MOTORES, "modelos": config.MODELOS})
 
         if caminho == "/api/refinar/pendentes":
             alvos = self._alvos_refino({})
@@ -387,7 +387,7 @@ class Manipulador(BaseHTTPRequestHandler):
                 nova = config.salvar(dados.get("motor"), dados.get("modelo"))
             except ValueError as erro:
                 return self._negar(400, str(erro))
-            return self._json(200, {**nova, "motores": config.MOTORES})
+            return self._json(200, {**nova, "motores": config.MOTORES, "modelos": config.MODELOS})
 
         if caminho == "/api/refinar":
             alvos = self._alvos_refino(dados)
