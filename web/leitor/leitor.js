@@ -263,6 +263,19 @@
     aplicarIdioma(original); window.scrollTo(0, y);
     try { localStorage.setItem(CHAVE_IDIOMA, original ? '1' : '0'); } catch (_) {}
   });
+  /* ---------- MAIÚSCULAS: opcional, lembrado neste aparelho; o texto guardado e o do editor não mudam ---------- */
+  var caixaAlta = $('caixa-alta'), CHAVE_ALTA = 'baixador.maiusculas';
+  function aplicarAlta(ligada) {
+    document.body.classList.toggle('maiusculas', ligada); caixaAlta.setAttribute('aria-pressed', String(ligada));
+    var r = ligada ? 'Voltar às letras normais' : 'Texto em MAIÚSCULAS'; caixaAlta.title = r; caixaAlta.setAttribute('aria-label', r);
+  }
+  try { aplicarAlta(localStorage.getItem(CHAVE_ALTA) === '1'); } catch (_) {}
+  caixaAlta.addEventListener('click', function () {
+    var ligada = !document.body.classList.contains('maiusculas'), y = window.scrollY;
+    aplicarAlta(ligada); ajustarTudo(); window.scrollTo(0, y);                     // maiúsculas ocupam mais: recalcula o tamanho em cada balão
+    try { localStorage.setItem(CHAVE_ALTA, ligada ? '1' : '0'); } catch (_) {}
+  });
+  if (document.fonts) { if (document.fonts.ready) document.fonts.ready.then(ajustarTudo); if (document.fonts.addEventListener) document.fonts.addEventListener('loadingdone', ajustarTudo); }   // a fonte embutida chega depois do 1º cálculo
   var nomeObra = '';                                                 // preenchido quando a biblioteca responde
   function urlObra(nome) { return (tok ? '/?' + qt + '&obra=' : '/?obra=') + encodeURIComponent(nome) + (tok ? '#biblioteca' : ''); }
   livro.addEventListener('click', function () { if (nomeObra) location.href = urlObra(nomeObra); });

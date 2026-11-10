@@ -1,6 +1,6 @@
 """Copia o leitor da web (web/leitor) para o app, para os dois lerem do MESMO jeito (botões, atalhos, barra de progresso).
 
-Roda antes de `npx cap sync android` (o fluxo do GitHub já faz isso). Gera em www/: leitor.html, leitor.js, leitor.css.
+Roda antes de `npx cap sync android` (o fluxo do GitHub já faz isso). Gera em www/: leitor.html, leitor.js, leitor.css e comic-neue-700.woff2.
 Esses três arquivos são cópias: não edite aqui, edite em web/leitor/ (ficam fora do Git, ver .gitignore).
 O que é específico do app (ler online com a chave, ler as obras baixadas, links) fica em www/leitor-app.js, que entra
 ANTES do leitor.js.
@@ -26,7 +26,8 @@ def main() -> None:
     (DESTINO / "leitor.html").write_text(html, encoding="utf-8")
     for nome in ("leitor.js", "leitor.css"):
         (DESTINO / nome).write_text((ORIGEM / nome).read_text(encoding="utf-8"), encoding="utf-8")
-    print("Leitor da web copiado para o app: leitor.html, leitor.js, leitor.css.")
+    (DESTINO / "comic-neue-700.woff2").write_bytes((RAIZ / "web" / "compartilhado" / "fontes" / "comic-neue-700.woff2").read_bytes())
+    print("Leitor da web copiado para o app: leitor.html, leitor.js, leitor.css e a fonte.")
 
 
 if __name__ == "__main__":

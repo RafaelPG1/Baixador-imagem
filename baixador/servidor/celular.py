@@ -43,7 +43,7 @@ ESTATICOS = {
 }
 CSP = (
     "default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; "
-    "img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+    "img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
 )
 ORIGEM_APP = re.compile(r"^(https?://localhost(:\d{1,5})?|capacitor://localhost)$")   # origens do app Android (WebView) e de testes locais
 HOST_TAILSCALE = re.compile(r"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*\.ts\.net$")

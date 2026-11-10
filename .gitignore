@@ -36,6 +36,7 @@ android-app/android/
 android-app/www/leitor.html
 android-app/www/leitor.js
 android-app/www/leitor.css
+android-app/www/comic-neue-700.woff2
 chave-apk*
 *.keystore
 *.jks

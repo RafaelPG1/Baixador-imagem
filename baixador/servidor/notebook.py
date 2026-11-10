@@ -75,7 +75,7 @@ ID_BIBLIOTECA = "b"          # identificador fixo da biblioteca: imagens em /ler
 
 CSP_PAGINA = (
     "default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; "
-    "img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'none'; "
+    "img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; "
     "frame-ancestors 'none'"
 )
 

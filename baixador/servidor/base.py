@@ -14,11 +14,13 @@ from baixador.nucleo.imagens import detectar_formato
 
 CSS = "text/css; charset=utf-8"
 JS = "text/javascript; charset=utf-8"
+FONTE = "font/woff2"
 
 # URL pública → (arquivo dentro de web/, tipo). Nada de segredo nesses arquivos; só o que está aqui é entregue.
 ESTATICOS_LEITOR: Dict[str, Tuple[str, str]] = {
     "/estatico/leitor.css": ("leitor/leitor.css", CSS),
     "/estatico/leitor.js": ("leitor/leitor.js", JS),
+    "/estatico/comic-neue-700.woff2": ("compartilhado/fontes/comic-neue-700.woff2", FONTE),   # Comic Neue Bold (OFL), embutida no leitor
 }
 ESTATICOS_EDICAO: Dict[str, Tuple[str, str]] = {          # só o servidor do notebook entrega (edição é do notebook)
     "/estatico/edicao.css": ("leitor/edicao.css", CSS),

@@ -1,3 +1,5 @@
+/* Comic Neue Bold embutida (licença OFL em web/compartilhado/fontes/): o texto traduzido fica igual em qualquer aparelho. */
+@font-face { font-family: "Comic Neue"; font-style: normal; font-weight: 700; font-display: swap; src: url("comic-neue-700.woff2") format("woff2"); }
 :root { color-scheme: dark; --fundo: #10151c; --texto: #e9eef5; --suave: #9aa8ba; --painel: #18202b; --borda: #2a3544; --acento: #5aa2ff; --linha: #2f6fdc; }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--fundo); color: var(--texto); font: 16px/1.5 "Segoe UI", system-ui, -apple-system, "Helvetica Neue", sans-serif; }
@@ -24,7 +26,8 @@ figure { -webkit-user-select: none; user-select: none; -webkit-tap-highlight-col
   border-radius: 9px; background: transparent; color: inherit; cursor: pointer; text-decoration: none; font: inherit; }
 .fl a:hover, .fl button:hover { background: rgba(255,255,255,.1); }
 .fl [aria-pressed=true] { background: rgba(90, 162, 255, .28); box-shadow: inset 0 0 0 1px rgba(140, 191, 255, .7); }
-body.original .tr { visibility: hidden; }              /* idioma original: a imagem sem os textos sobrepostos */
+body.original .tr { visibility: hidden; }
+body.maiusculas .tr { text-transform: uppercase; }     /* opcional: texto traduzido em MAIÚSCULAS (comum em mangá) */              /* idioma original: a imagem sem os textos sobrepostos */
 .fl [aria-disabled=true] { opacity: .35; pointer-events: none; }
 .fl svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
 #coluna { right: max(10px, env(safe-area-inset-right)); top: calc(max(10px, env(safe-area-inset-top)) + 62px); display: flex; flex-direction: column; gap: 2px;
