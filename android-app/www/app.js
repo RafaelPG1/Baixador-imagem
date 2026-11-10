@@ -571,6 +571,14 @@
     if (lista.length) { aviso('Importando… não feche o app.'); importarArquivos(lista); }
   });
   window.addEventListener('beforeunload', soltarUrls);
+  /* Botão voltar do celular: sobe um nível (obra -> lista, abas -> início) e só no início fecha o app. Sem este tratamento o Android fecha o app direto. */
+  var nativoApp = plugin('App');
+  if (nativoApp && nativoApp.addListener) nativoApp.addListener('backButton', function () {
+    var h = location.hash || '#/';
+    if (h === '#/' || h === '#/conectar') { nativoApp.exitApp(); return; }
+    var pai = h.indexOf('#/obra/') === 0 ? '#/baixadas' : '#/';
+    location.replace(location.pathname + location.search + pai);                  // replace: não deixa voltas extras no histórico
+  });
   /* O leitor (cópia da web) manda para "/leitor?c=…" e "/?obra=…": no app, a primeira é a página leitor.html e a segunda, a tela da obra. */
   (function () {
     var q = new URLSearchParams(location.search);

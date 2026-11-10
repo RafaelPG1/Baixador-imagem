@@ -17,7 +17,8 @@ figure.com-medidas { min-height: 0; }
 .tr[data-s] { overflow: visible; }                    /* nem no tamanho mínimo coube: melhor passar um pouco da caixa do que cortar a frase */
 
 /* ---- controles flutuantes (escondidos até dar dois cliques na leitura) e barra de progresso lateral */
-main { touch-action: manipulation; }
+body { overflow-x: hidden; }                       /* texto que passa da caixa (tamanho mínimo) nunca cria rolagem para os lados */
+main { touch-action: pan-y pinch-zoom; }          /* só rola na vertical; sem zoom de toque duplo (esse gesto abre os botões) */
 figure { -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; }
 #flutuantes[hidden], #painel-lista[hidden] { display: none; }
 .fl { position: fixed; z-index: 20; color: #e7ebf1; background: rgba(33, 37, 44, .94); border: 1px solid rgba(255,255,255,.12);
@@ -27,7 +28,6 @@ figure { -webkit-user-select: none; user-select: none; -webkit-tap-highlight-col
 .fl a:hover, .fl button:hover { background: rgba(255,255,255,.1); }
 .fl [aria-pressed=true] { background: rgba(90, 162, 255, .28); box-shadow: inset 0 0 0 1px rgba(140, 191, 255, .7); }
 body.original .tr { visibility: hidden; }
-body.maiusculas .tr { text-transform: uppercase; }     /* opcional: texto traduzido em MAIÚSCULAS (comum em mangá) */              /* idioma original: a imagem sem os textos sobrepostos */
 .fl [aria-disabled=true] { opacity: .35; pointer-events: none; }
 .fl svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
 #coluna { right: max(10px, env(safe-area-inset-right)); top: calc(max(10px, env(safe-area-inset-top)) + 62px); display: flex; flex-direction: column; gap: 2px;

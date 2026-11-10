@@ -3,10 +3,13 @@
   "version": "1.0.0",
   "private": true,
   "description": "App Android (Capacitor) do Baixador de Imagens: lê as obras do notebook pelo Tailscale e baixa para ler offline.",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "dependencies": {
     "@capacitor-mlkit/barcode-scanning": "8.2.2",
     "@capacitor/android": "8.6.0",
+    "@capacitor/app": "8.1.2",
     "@capacitor/core": "8.6.0",
     "baixador-salvar": "file:./plugins/baixador-salvar"
   },

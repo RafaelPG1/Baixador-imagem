@@ -154,8 +154,12 @@
     var u; try { u = new URL(a.getAttribute('href'), location.href); } catch (_) { return; }
     if (u.origin !== location.origin) return;
     var destino = paraApp(u);
-    if (destino) { ev.preventDefault(); location.href = destino; }
+    if (destino) { ev.preventDefault(); location.replace(destino); }   // replace: capítulos não empilham no histórico, o voltar do celular volta à obra
   }, true);
+
+  /* ---------- botão voltar do celular: volta (à obra); sem histórico, abre a tela inicial do app ---------- */
+  var nativoApp = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App;
+  if (nativoApp && nativoApp.addListener) nativoApp.addListener('backButton', function () { if (history.length > 1) history.back(); else location.href = 'index.html'; });
 
   /* ---------- erro legível quando o capítulo não abre ---------- */
   document.addEventListener('DOMContentLoaded', function () {
