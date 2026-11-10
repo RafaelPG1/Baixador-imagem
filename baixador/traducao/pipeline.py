@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Protocol, Sequence, Tuple
 
-from baixador.traducao import config, gemini, hymt, openrouter, refino
+from baixador.traducao import config, detector, gemini, hymt, openrouter, refino
 from baixador.traducao.numerada import registrar_tempo
 from baixador.traducao import inteligencia as ia
 from baixador.traducao.ocr_texto import continua_no_seguinte, dividir_traducao
@@ -114,6 +114,7 @@ class Bloco:
     referencia: float = 0.0                                               # altura de uma linha do texto original, em px da imagem
     grupo: int = -1                                                       # balões da mesma frase contínua partilham o número
     origem: str = ""                                                      # "memoria" (correção do usuário) | "argos" | "hy"
+    balao: Optional[Tuple[float, float, float, float]] = None             # x0, y0, x1, y1 do balão achado pelo detector (None = sem detector)
 
 
 # --------------------------------------------------------------------------- agrupamento (puro Python)
@@ -746,7 +747,66 @@ def ler_blocos(imagem, motor: MotorOCR) -> List[Bloco]:
         linhas = _sem_duplicadas(recuperar_linhas_perdidas(imagem, linhas, motor))
     except Exception:
         pass  # a recuperação é um extra: se falhar, segue com o que o OCR leu
-    return _sem_efeitos(imagem, agrupar_linhas(linhas))
+    return _com_baloes(imagem, _sem_efeitos(imagem, agrupar_linhas(linhas)))
+
+
+def _com_baloes(imagem, blocos: List[Bloco]) -> List[Bloco]:
+    """Detector de balões (opcional): marca em que balão cada bloco está e junta blocos do mesmo balão. Falhou = segue sem."""
+    if not blocos:
+        return blocos
+    try:
+        alt, larg = imagem.shape[:2]
+        baloes = [tuple(d["box"]) for d in detector.detectar(imagem)
+                  if d["classe"] == "balao" and (d["box"][2] - d["box"][0]) * (d["box"][3] - d["box"][1]) < 0.5 * alt * larg]
+        for b in blocos:
+            cx, cy = b.x + b.w / 2, b.y + b.h / 2
+            dentro = [k for k in baloes if k[0] <= cx <= k[2] and k[1] <= cy <= k[3]
+                      and min(b.x + b.w, k[2]) - max(b.x, k[0]) >= 0.6 * b.w and min(b.y + b.h, k[3]) - max(b.y, k[1]) >= 0.6 * b.h]
+            if dentro:
+                b.balao = min(dentro, key=lambda k: (k[2] - k[0]) * (k[3] - k[1]))
+        return _juntar_no_balao(blocos)
+    except Exception:
+        return blocos                                       # é um extra: na dúvida, mantém tudo
+
+
+def _juntar_no_balao(blocos: List[Bloco]) -> List[Bloco]:
+    """Blocos que o OCR separou mas que estão no MESMO balão viram um só (letra de tamanho parecido e sem vão grande)."""
+    saida: List[Bloco] = []
+    for b in blocos:
+        alvo = next((a for a in saida if a.balao is not None and a.balao == b.balao and _mesma_fala(a, b)), None)
+        if alvo is None:
+            saida.append(b)
+            continue
+        a, c = sorted((alvo, b), key=lambda k: (round(k.y), k.x))
+        x0, y0, x1, y1 = min(a.x, c.x), min(a.y, c.y), max(a.x + a.w, c.x + c.w), max(a.y + a.h, c.y + c.h)
+        n = a.linhas + c.linhas
+        alvo.original = (a.original + " " + c.original)[:MAX_TEXTO_BLOCO]
+        alvo.confianca = (a.confianca * a.linhas + c.confianca * c.linhas) / n
+        alvo.x, alvo.y, alvo.w, alvo.h, alvo.linhas = x0, y0, x1 - x0, y1 - y0, n
+    return saida
+
+
+def _mesma_fala(a: Bloco, b: Bloco) -> bool:
+    ha, hb = _altura_media_linha(a), _altura_media_linha(b)
+    if not 0.5 <= ha / max(hb, 1.0) <= 2.0:
+        return False
+    vao = max(a.y, b.y) - min(a.y + a.h, b.y + b.h)
+    return vao <= 2.5 * min(ha, hb)
+
+
+def _cortar_no_balao(b: Bloco) -> None:
+    """A caixa da tradução não passa da borda do balão achado pelo detector (nunca fica menor que o texto original)."""
+    if b.balao is None:
+        return
+    bx0, by0, bx1, by1 = b.balao[0] + 2, b.balao[1] + 2, b.balao[2] - 2, b.balao[3] - 2
+    ox, oy, ow, oh = b.caixa_original or (b.x, b.y, b.w, b.h)
+    x0, y0 = min(max(b.x, bx0), ox), min(max(b.y, by0), oy)
+    x1, y1 = max(min(b.x + b.w, bx1), ox + ow), max(min(b.y + b.h, by1), oy + oh)
+    b.x, b.y, b.w, b.h = x0, y0, x1 - x0, y1 - y0
+    if b.livre:
+        lx0, ly0 = max(b.livre[0], x0), max(b.livre[1], y0)
+        lx1, ly1 = min(b.livre[0] + b.livre[2], x1), min(b.livre[1] + b.livre[3], y1)
+        b.livre = (lx0, ly0, lx1 - lx0, ly1 - ly0) if lx1 > lx0 and ly1 > ly0 else None
 
 
 def _motor_de(traduzir: Any) -> Any:
@@ -886,6 +946,7 @@ def finalizar_blocos(imagem, blocos: List[Bloco]) -> Dict[str, Any]:
     caixas = [(id(b), (b.x, b.y, b.w, b.h)) for b in blocos]
     for bloco in uteis:
         ajustar_ao_balao(imagem, bloco, [c for i, c in caixas if i != id(bloco)])
+        _cortar_no_balao(bloco)
     separar_sobrepostos(uteis)
     return {"w": int(largura), "h": int(altura), "blocos": [bloco_para_dict(b) for b in uteis]}
 

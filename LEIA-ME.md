@@ -209,6 +209,12 @@ Memória: correções suas continuam valendo (também para o mesmo balão lido c
 aparece e a forma antiga está no resultado). Nomes do glossário saem sempre com a grafia do glossário.
 Pelo terminal: `python -m baixador --traduzir "obras\Obra\Cap 001" --de en` (destino sempre `pt`).
 
+## Detector de balões (tradução, ligado por padrão)
+
+Na primeira tradução o programa baixa **uma vez** um modelo de visão (`detector_int8.onnx`, ~44 MB, Apache-2.0, de `ogkalu/comic-text-and-bubble-detector`) para `dados/modelos/`; depois roda offline. Ele acha os balões da página e é usado para (1) juntar no mesmo texto o que o OCR separou dentro de **um** balão e (2) não deixar a caixa da tradução passar da borda do balão. Páginas altas (webtoon) são fatiadas na vertical.
+
+É um extra: sem internet, sem o modelo ou se der qualquer erro, a tradução segue pelo método de sempre (cor do fundo). Para desligar, ponha `detector_balao=0` no `.env`. Se não parecer funcionar, o motivo fica em `baixador.traducao.detector.ultimo_erro`; apagar `dados/modelos/detector_int8.onnx` força novo download.
+
 ## Outros comandos
 
 - `python -m baixador --sem-navegador`: não abre a janela sozinha.
