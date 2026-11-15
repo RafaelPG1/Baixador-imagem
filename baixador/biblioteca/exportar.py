@@ -2,8 +2,9 @@
 
 Formato (versão 1), tudo SEM compressão (imagens já são comprimidas; o app lê sem biblioteca externa):
     baixador-export.json                  {"formato": 1, "gerado": ..., "obras": [{"nome", "capa"}], "capitulos": [...]}
-    c0/capitulo.json                      os mesmos dados que o leitor usa (imagens, medidas e trechos traduzidos)
+    c0/capitulo.json                      os mesmos dados que o leitor do usuário usa (imagens, medidas e falas traduzidas; sem dados de verificação)
     c0/img/001.jpg ...                    as imagens originais do capítulo
+    c0/limpeza/001_1.png ...              o texto original apagado de cada página traduzida (PNG transparente que vai por cima da imagem)
     capas/o0.jpg                          capa da obra (se houver)
 Só lê a biblioteca: nada é alterado nem apagado.
 """
@@ -57,7 +58,15 @@ def gerar_zip(raiz: Path, caps: List[Dict[str, Any]], saida: BinaryIO) -> Dict[s
                 if arquivo.is_file() and not arquivo.is_symlink():
                     z.write(arquivo, f"{d}/img/{im['arq']}")
                     imagens += 1
-            leitura = {k: dados[k] for k in ("rel", "obra", "rotulo", "titulo", "imagens")}
+            limpeza = pasta / "traducao" / "limpeza"
+            for im in dados["imagens"]:
+                png = limpeza / str(im.get("patch") or "")
+                if im.get("patch") and png.is_file() and not png.is_symlink():
+                    z.write(png, f"{d}/limpeza/{im['patch']}")
+                elif im.get("patch"):                         # PNG sumiu: a página vai sem tradução em vez de quebrada
+                    im["patch"], im["falas"] = None, []
+            leitura = {k: dados[k] for k in ("rel", "obra", "rotulo", "titulo", "imagens", "traduzido")}
+            leitura["subLimpeza"] = "limpeza/"
             z.writestr(f"{d}/capitulo.json", json.dumps(leitura, ensure_ascii=False))
             capitulos.append({
                 "id": dados["rel"], "dir": d, "obra": indice_obra[nome_obra], "rotulo": dados["rotulo"],

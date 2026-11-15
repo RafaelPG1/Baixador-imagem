@@ -42,7 +42,7 @@
     var cap = null; try { cap = await obter('caps', rel); } catch (_) {}
     if (cap) {
       return resposta(200, { rel: cap.id, obra: cap.obra, rotulo: cap.rotulo, titulo: cap.dados.titulo, imagens: cap.dados.imagens,
-        base: PREF + 'l/' + enc(cap.id) + '/', sub: '' });
+        base: PREF + 'l/' + enc(cap.id) + '/', sub: '', subLimpeza: 'limpeza/' });
     }
     if (!cfg()) { falhou('Este capítulo não está baixado e o app não está conectado ao notebook.'); return resposta(404, { erro: 'sem-conexao' }); }
     var r;

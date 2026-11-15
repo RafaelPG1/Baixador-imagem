@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Optional, Tuple
 from urllib.parse import urlsplit
 
-from baixador.traducao import ambiente
+from baixador.nucleo import ambiente
 
 TAG = "apk-latest"
 NOME_APK = "BaixadorLeitor.apk"

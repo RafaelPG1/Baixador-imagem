@@ -57,7 +57,7 @@
     <div id="opcoes-continuar" hidden class="secao">
       <label class="marcar" title="Ligado: ao terminar um capítulo, clica em “próximo” e repete. Desligado: baixa só o capítulo atual."><input type="checkbox" id="continuar-auto"> Continuar baixando os próximos capítulos automaticamente</label>
       <p class="nota" id="nota-continuar" hidden>Se não achar ou não conseguir baixar o próximo capítulo, o programa para onde está, deixa o navegador aberto e avisa. Ele nunca afirma que a obra acabou: pode ser o último capítulo ou um erro; confira no site.</p>
-      <label class="marcar" title="Só vale com “Continuar baixando os próximos capítulos automaticamente” ligado. A tradução começa quando os downloads terminarem, usando os idiomas escolhidos na Biblioteca."><input type="checkbox" id="traduzir-auto"> Traduzir automaticamente após concluir os downloads</label>
+      <label class="marcar" title="Só vale com “Continuar baixando os próximos capítulos automaticamente” ligado. A tradução começa quando os downloads terminarem, com o motor escolhido na Biblioteca ou na aba Traduções (inglês para português)."><input type="checkbox" id="traduzir-auto"> Traduzir automaticamente após concluir os downloads</label>
       <p class="nota" id="nota-traduzir" hidden>A tradução só começa se “Continuar baixando os próximos capítulos automaticamente” também estiver ligado.</p>
       <div id="opcao-atualizar" hidden>
         <label class="marcar" title="Só aparece com as duas opções acima desligadas. Parte do último capítulo salvo da obra, pula o que já está na biblioteca e baixa só os mais recentes."><input type="checkbox" id="atualizar-auto"> Atualizar obra: baixar os capítulos mais recentes</label>
@@ -151,23 +151,15 @@
     <div class="bib-menu">
       <button type="button" id="bib-tr-btn" class="btn" aria-expanded="false" aria-controls="bib-tr-painel"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 8 6 6"/><path d="m4 14 6-6 2-3"/><path d="M2 5h12"/><path d="M7 2h1"/><path d="m22 22-5-10-5 10"/><path d="M14 18h6"/></svg><span>Tradução</span><span id="bib-tr-resumo" class="suave"></span><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>
       <div id="bib-tr-painel" class="bib-popover bib-popover-largo" hidden>
-        <div class="bib-campos">
-          <label class="campo">Traduzir de
-            <select id="trad-de"><option value="en" selected>Inglês</option><option value="es">Espanhol</option><option value="fr">Francês</option><option value="it">Italiano</option><option value="de">Alemão</option><option value="pt">Português</option></select>
-          </label>
-          <label class="campo">Para
-            <select id="trad-para" disabled title="O destino da tradução é sempre o português."><option value="pt" selected>Português</option></select>
-          </label>
-        </div>
+        <p class="nota">Inglês → português. O motor vale para as próximas traduções.</p>
         <label class="campo">Motor
           <select id="bib-motor" aria-label="Motor de tradução"></select>
         </label>
         <p id="bib-motor-status" class="nota" role="status"></p>
         <div class="bib-pop-acoes">
           <button type="button" id="trad-pendentes" class="btn principal">Traduzir tudo que falta</button>
-          <button type="button" id="bib-refinar" class="btn" disabled title="Melhora com o Hy-MT2 os capítulos já traduzidos pelo Argos">Refinar capítulos já traduzidos</button>
         </div>
-        <div id="trad-aviso" class="faixa aviso" hidden>Falta instalar o recurso de tradução. No terminal, com o ambiente virtual ativado: pip install -r requirements-traducao.txt</div>
+        <div id="trad-aviso" class="faixa aviso" hidden></div>
       </div>
     </div>
     <div class="bib-menu">
@@ -204,9 +196,9 @@
       <legend>Motor de tradução</legend>
       <div id="tr-motor-opcoes" class="tr-motor-opcoes"></div>
       <p id="tr-uso" class="nota" role="status"></p>
-      <label class="nota">Modelo local (Ollama) para os motores Hy-MT2 e Híbrido: <select id="tr-modelo" aria-label="Modelo local do Ollama"></select></label>
-      <p id="tr-motor-nota" class="nota">Vale para as próximas traduções; a que está em andamento termina com o motor com que começou. O Hy-MT2 roda no Ollama, neste computador. O Gemini usa a chave key_gemini e o OpenRouter a chave key_openrouter (modelo em modelo_openrouter), ambas no arquivo .env; os dois recebem só o texto extraído, nunca a imagem.</p>
-      <div class="acoes"><button type="button" id="tr-hy-verificar" class="btn">Verificar o motor escolhido</button><button type="button" id="tr-refinar" class="btn" disabled title="Melhora com o Hy-MT2 os capítulos que já foram traduzidos pelo Argos">Refinar capítulos já traduzidos</button><span id="tr-hy-status" class="nota" role="status"></span></div>
+      <label class="nota" id="tr-modelo-campo">Modelo do TranslateGemma no Ollama: <select id="tr-modelo" aria-label="Modelo local do Ollama"></select></label>
+      <p id="tr-motor-nota" class="nota">Vale para as próximas traduções; a que está em andamento termina com o motor com que começou, e nada troca de motor sozinho. O TranslateGemma roda no Ollama, neste computador (baixe com ollama pull translategemma:4b). O DeepL usa a chave DEEPL_API_KEY e o Gemini a chave GEMINI_API_KEY, no arquivo .env; os motores de nuvem recebem só o texto extraído, nunca a imagem. Por enquanto só inglês para português.</p>
+      <div class="acoes"><button type="button" id="tr-hy-verificar" class="btn">Verificar o motor escolhido</button><span id="tr-hy-status" class="nota" role="status"></span></div>
     </fieldset>
     <div class="acoes">
       <span id="tr-chip" class="chip">Nenhuma tradução</span>
@@ -217,7 +209,7 @@
       <p id="tr-atual" class="tr-atual" role="status"></p>
       <div class="tr-barra" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="tr-barra"><div id="tr-barra-in"></div></div>
       <p id="tr-numeros" class="nota num"></p>
-      <div id="tr-aviso" class="faixa aviso" hidden>Falta instalar o recurso de tradução. No terminal, com o ambiente virtual ativado: pip install -r requirements-traducao.txt</div>
+      <div id="tr-aviso" class="faixa aviso" hidden></div>
       <div id="tr-erro" class="faixa erro" hidden></div>
       <div id="tr-avisos" class="faixa aviso" hidden></div>
       <ul id="tr-fila" class="tr-fila" aria-label="Capítulos da tradução"></ul>

@@ -21,10 +21,8 @@ def _criar_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--traduzir", metavar="PASTA",
-        help="lê o texto das imagens da PASTA, traduz (grátis, offline) e mostra sobre a imagem no leitor",
+        help="traduz as imagens da PASTA (um capítulo) com o motor escolhido na aba Traduções; o resultado fica na própria pasta",
     )
-    parser.add_argument("--de", default="en", help="idioma do texto nas imagens (padrão: en)")
-    parser.add_argument("--para", default="pt", choices=["pt"], help="idioma da tradução (sempre pt)")
     parser.add_argument(
         "--apagar-perfil", action="store_true",
         help="apaga o perfil próprio do navegador (extensões, logins e configurações guardados)",
@@ -41,20 +39,17 @@ def principal(argv: Optional[List[str]] = None) -> int:
 
     args = _criar_parser().parse_args(argv)
     if args.traduzir:
-        from baixador.traducao.pipeline import traduzir_pasta  # dependências opcionais: só carrega se for usado
+        from baixador.traducao import executor  # só carrega se for usado
 
         try:
-            r = traduzir_pasta(
-                Path(args.traduzir).expanduser(), args.de, args.para, informar=print,
-            )
+            r = executor.traduzir_pasta_cli(Path(args.traduzir).expanduser(), informar=print)
         except ErroBaixador as erro:
             print(f"Erro: {erro}", file=sys.stderr)
             return 1
         except KeyboardInterrupt:
             print("\nInterrompido.", file=sys.stderr)
             return 130
-        print(f"\nConcluído: {r.blocos} trecho(s) em {r.com_texto} de {r.imagens} imagem(ns).")
-        print("Para ler: abra o programa (python -m baixador) e use a Biblioteca.")
+        print(f"\nConcluído: {r['falas']} fala(s) traduzida(s). Para ler: abra o programa (python -m baixador) e use a Biblioteca.")
         return 0
     if args.apagar_perfil:
         from baixador.navegador import navegadores

@@ -1,0 +1,152 @@
+import { createHash } from 'node:crypto';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import path from 'node:path';
+import { progresso } from '../progresso.js';
+import { TranslationError } from '../errors.js';
+import { getEngines, translate as translateWith, getDefaultEngine } from '../translator.js';
+
+const BATCH = 8; // falas por lote
+const CONTEXT = 3; // falas anteriores mostradas como contexto
+const MAX_CHARS = 1500; // teto de texto novo por lote (cabe no num_ctx 4096 do modelo local)
+const ROW = 80; // px: balões na mesma faixa vertical leem-se da esquerda para a direita
+const CACHE_VERSION = 1; // mude ao trocar o formato do prompt: invalida o cache
+// Só estes erros do lote justificam tentar cada fala sozinha. Qualquer outro (Ollama fora do ar, modelo ausente, limite, timeout) aborta a execução; o cache permite retomar.
+const RECOVERABLE = new Set(['BAD_BATCH', 'EMPTY_RESPONSE']);
+
+const hasLetters = (s) => /[A-Za-z]/.test(s);
+
+// Falas a traduzir, na ordem de leitura (páginas em ordem; dentro da página, de cima para baixo e da esquerda para a direita).
+// Texto de correcoes.json vence o da 4a; correção vazia descarta a fala. Região "vazia" não entra.
+export function collectUnits(ocr, fixes = {}) {
+  const out = [];
+  for (const page of ocr.pages) {
+    const units = page.units
+      .map((u) => ({ ...u, source: (fixes[u.id] ?? u.text ?? '').trim() }))
+      .filter((u) => u.source && (u.status !== 'vazio' || u.id in fixes));
+    units.sort((a, b) => Math.round(a.bbox[1] / ROW) - Math.round(b.bbox[1] / ROW) || a.bbox[0] - b.bbox[0]);
+    out.push(...units);
+  }
+  return out;
+}
+
+// Lotes de até BATCH falas (e MAX_CHARS caracteres), cada um com as CONTEXT falas anteriores.
+// Só falas com letras vão ao motor; "139", "?!" e "..." são copiadas como estão.
+export function makeBatches(units, { size = BATCH, context = CONTEXT, maxChars = MAX_CHARS } = {}) {
+  const todo = units.filter((u) => hasLetters(u.source));
+  const batches = [];
+  for (let i = 0; i < todo.length; ) {
+    let n = 0;
+    let chars = 0;
+    while (i + n < todo.length && n < size && (n === 0 || chars + todo[i + n].source.length <= maxChars)) chars += todo[i + n++].source.length;
+    batches.push({ context: todo.slice(Math.max(0, i - context), i), units: todo.slice(i, i + n) });
+    i += n;
+  }
+  return batches;
+}
+
+// Uma fala por linha, numerada: "[1] TEXTO". As de contexto vêm primeiro e também voltam traduzidas (validam a resposta inteira).
+export const buildBatchText = ({ context, units }) =>
+  [...context, ...units].map((u, i) => `[${i + 1}] ${u.source.replace(/\s*\n\s*/g, ' ')}`).join('\n');
+
+// Lê a resposta e exige exatamente os números 1..n, cada um uma vez, todos com texto. Senão lança BAD_BATCH.
+export function parseBatch(output, n) {
+  const found = new Map();
+  let last = null;
+  for (const line of output.split('\n')) {
+    const m = line.match(/^\s*\[(\d+)\]\s*(.*)$/);
+    if (m) {
+      last = Number(m[1]);
+      if (found.has(last)) throw new TranslationError('BAD_BATCH', `A fala [${last}] veio duplicada na resposta.`, 502);
+      found.set(last, m[2].trim());
+    } else if (last && line.trim()) found.set(last, `${found.get(last)} ${line.trim()}`.trim()); // frase quebrada em duas linhas
+  }
+  const missing = Array.from({ length: n }, (_, i) => i + 1).filter((k) => !found.get(k));
+  const extra = [...found.keys()].filter((k) => k < 1 || k > n);
+  if (missing.length || extra.length) {
+    throw new TranslationError('BAD_BATCH', `Resposta incompleta ou com números errados (faltam: ${missing.join(', ') || 'nenhum'}; sobram: ${extra.join(', ') || 'nenhum'}).`, 502);
+  }
+  return Array.from({ length: n }, (_, i) => found.get(i + 1));
+}
+
+const hash = (s) => createHash('sha256').update(s).digest('hex').slice(0, 24);
+export const batchKey = (batch, provider, glossary) => hash(JSON.stringify([CACHE_VERSION, provider, buildBatchText(batch), batch.context.length, glossary]));
+
+// Traduz um lote. Primeiro tudo junto; se a resposta não passar na validação, cada fala vai sozinha (modo "individual").
+// Uma fala que ainda falhar fica com status "erro" e sem tradução, nunca com a tradução de outra.
+export async function translateBatch(batch, engine, translateFn) {
+  try {
+    const all = parseBatch((await translateFn(buildBatchText(batch), engine)).translation, batch.context.length + batch.units.length);
+    return { mode: 'lote', results: batch.units.map((u, i) => ({ id: u.id, translation: all[batch.context.length + i] })) };
+  } catch (err) {
+    if (!RECOVERABLE.has(err.code)) throw err;
+    const results = [];
+    for (const u of batch.units) {
+      try {
+        const alone = (await translateFn(u.source, engine)).translation.trim();
+        results.push(alone ? { id: u.id, translation: alone } : { id: u.id, error: 'resposta vazia' });
+      } catch (e) {
+        if (!RECOVERABLE.has(e.code)) throw e;
+        results.push({ id: u.id, error: e.message });
+      }
+    }
+    return { mode: 'individual', reason: err.message, results };
+  }
+}
+
+// Termos do glossário (glossario.json: { "TERMO": "tradução" }) que a fala tem e a tradução não usou → marcar para revisão.
+export function glossaryMisses(source, translation, glossary) {
+  return Object.entries(glossary).filter(([term, pt]) => new RegExp(`\\b${term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(source) && !translation.toLowerCase().includes(pt.toLowerCase())).map(([t]) => t);
+}
+
+async function readJson(file, fallback) {
+  try {
+    return JSON.parse(await readFile(file, 'utf8'));
+  } catch (err) {
+    if (err.code === 'ENOENT') return fallback;
+    throw new Error(`Não consegui ler ${file}: ${err.message}`);
+  }
+}
+
+export async function translateChapter(ocrFile, outDir, { engine, translateFn = (t, e) => translateWith(t, e, getEngines()), log = console.log, size, context } = {}) {
+  const ocr = await readJson(ocrFile, null);
+  if (!ocr) throw new Error(`Não achei ${ocrFile}. Rode "npm run ocr" antes.`);
+  const base = path.dirname(ocrFile);
+  const fixes = await readJson(path.join(base, 'correcoes.json'), {});
+  const glossary = await readJson(path.join(base, 'glossario.json'), {});
+  engine ??= getDefaultEngine();
+  const provider = getEngines()[engine]?.name ?? engine;
+  const units = collectUnits(ocr, fixes);
+  const batches = makeBatches(units, { size, context });
+  await mkdir(path.join(outDir, 'cache'), { recursive: true });
+
+  const done = new Map(); // id → { translation | error, mode, batch }
+  const stats = { units: units.length, batches: batches.length, cached: 0, translated: 0, individual: 0, errors: 0 };
+  const t0 = Date.now();
+  for (const [i, batch] of batches.entries()) {
+    const file = path.join(outDir, 'cache', `${batchKey(batch, provider, glossary)}.json`);
+    let entry = await readJson(file, null);
+    if (entry) stats.cached++;
+    else {
+      entry = await translateBatch(batch, engine, translateFn);
+      if (entry.results.every((r) => !r.error)) await writeFile(file, JSON.stringify(entry, null, 2)); // lote com erro não é guardado: roda de novo
+      stats.translated++;
+      log(`lote ${i + 1}/${batches.length}: ${batch.units.length} falas (${entry.mode}) — ${((Date.now() - t0) / 1000).toFixed(0)} s`);
+    }
+    if (entry.mode === 'individual') stats.individual++;
+    progresso({ etapa: 'etapa4b', feitas: i + 1, total: batches.length });
+    for (const r of entry.results) done.set(r.id, { ...r, mode: entry.mode, batch: i + 1 });
+  }
+
+  const out = units.map((u) => {
+    const r = done.get(u.id);
+    const base = { id: u.id, page: u.page, file: u.file, balloonId: u.balloonId, textIds: u.textIds, bbox: u.bbox, source: u.source };
+    if (!r) return { ...base, translation: u.source, status: 'copiado', mode: null, batch: null }; // só números/pontuação
+    if (r.error) { stats.errors++; return { ...base, translation: null, status: 'erro', error: r.error, mode: r.mode, batch: r.batch }; }
+    const misses = glossaryMisses(u.source, r.translation, glossary);
+    return { ...base, translation: r.translation, status: misses.length || r.mode === 'individual' ? 'revisar' : 'ok', glossary: misses, mode: r.mode, batch: r.batch };
+  });
+  const doc = { generatedAt: new Date().toISOString(), engine, provider, source: path.relative(outDir, ocrFile).split(path.sep).join('/'), stats, units: out };
+  await writeFile(path.join(outDir, 'traducao.json'), JSON.stringify(doc, null, 2));
+  log(`${out.length} falas em ${batches.length} lotes (${stats.cached} do cache, ${stats.translated} traduzidos, ${stats.individual} caíram para tradução individual, ${stats.errors} com erro) → ${path.join(outDir, 'traducao.json')}`);
+  return doc;
+}

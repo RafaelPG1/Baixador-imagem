@@ -7,19 +7,22 @@ os dados do capítulo escolhido (`dados_do_capitulo`) e monta a página no naveg
 from __future__ import annotations
 
 import json
+import math
 import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from baixador.biblioteca import organizacao as org
 from baixador.nucleo.imagens import detectar_formato
+from baixador.traducao import legado
 
 NOME_TRADUCAO = "traducao.json"
-NOME_AVISO = "traducao.aviso.json"
+PASTA_LIMPEZA = "traducao/limpeza/"                   # PNG (por página) com o texto original apagado, dentro do capítulo
 NOME_IMG = "img"                                     # as imagens do capítulo ficam em Capítulo/img/; os .json ficam na raiz do capítulo
 EXTENSOES = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif", ".bmp"}
 MAX_IMAGENS = 5000
-MAX_BLOCOS_POR_IMAGEM = 200
+MAX_FALAS_POR_IMAGEM = 200
+MAX_BALOES_POR_IMAGEM = 200
 
 
 def _natural(nome: str):
@@ -64,13 +67,18 @@ def _subpastas(pasta: Path) -> List[Path]:
         return []
 
 
-def _paginas_sem_traducao(pasta: Path) -> int:
-    """Quantas páginas ficaram sem tradução na última tradução do capítulo (0 = completo)."""
+_CONTAGENS = re.compile(rb'"counts"\s*:\s*(\{[^{}]*\})')
+
+
+def _contagens(pasta: Path) -> Dict[str, int]:
+    """{"ok": n, "revisar": n, "erro": n, ...} do traducao.json novo, lendo só o começo do arquivo (o campo vem antes das páginas)."""
     try:
-        d = json.loads((pasta / NOME_AVISO).read_text(encoding="utf-8"))
-        return len({str(f["imagem"]) for f in d.get("falhas", []) if isinstance(f, dict) and "imagem" in f})
-    except (OSError, ValueError, AttributeError, TypeError):
-        return 0
+        with (pasta / NOME_TRADUCAO).open("rb") as f:
+            achado = _CONTAGENS.search(f.read(8192))
+        bruto = json.loads(achado.group(1)) if achado else {}
+        return {str(k): int(v) for k, v in bruto.items() if isinstance(v, (int, float))}
+    except (OSError, ValueError, TypeError):
+        return {}
 
 
 def _varrer(raiz: Path) -> List[Dict[str, Any]]:
@@ -90,8 +98,10 @@ def _varrer(raiz: Path) -> List[Dict[str, Any]]:
                 d["obra"] = d["obra"] or sub.name
                 achados.append({"pasta": cap, "rel": f"{sub.name}/{cap.name}", "nomes": nomes, "antigo": False, **d})
     for a in achados:
-        a["traduzido"] = (a["pasta"] / NOME_TRADUCAO).is_file()
-        a["incompleta"] = _paginas_sem_traducao(a["pasta"]) if a["traduzido"] else 0
+        a["traduzido"] = legado.traducao_nova(a["pasta"] / NOME_TRADUCAO)       # só o formato novo conta como traduzido
+        c = _contagens(a["pasta"]) if a["traduzido"] else {}
+        a["incompleta"] = c.get("erro", 0)                    # falas que o motor não conseguiu traduzir
+        a["revisar"] = c.get("revisar", 0)                    # falas que a tradução ou o OCR marcaram para revisão
         try:
             a["quando"] = a["pasta"].stat().st_mtime
         except OSError:
@@ -101,73 +111,100 @@ def _varrer(raiz: Path) -> List[Dict[str, Any]]:
 
 # --------------------------------------------------------------------------- dados para o leitor global
 
-def refinando(pasta: Path) -> bool:
-    """O Hy-MT2 ainda está melhorando a tradução deste capítulo? (o leitor consulta de novo enquanto for verdade)"""
-    try:
-        r = json.loads((pasta / NOME_TRADUCAO).read_text(encoding="utf-8")).get("refino")
-        return isinstance(r, dict) and r.get("estado") in ("pendente", "refinando")
-    except (OSError, ValueError, AttributeError):
-        return False
-
-
-def _ler_traducao(pasta: Path) -> dict:
-    """Lê traducao.json (gerado por traducao/pipeline.py). Qualquer problema no arquivo = sem tradução."""
-    try:
-        dados = json.loads((pasta / NOME_TRADUCAO).read_text(encoding="utf-8"))
-        imagens = dados["imagens"]
-        return imagens if isinstance(imagens, dict) else {}
-    except (OSError, ValueError, KeyError, TypeError):
-        return {}
-
-
 _COR = re.compile(r"^#[0-9a-fA-F]{6}$")
+_PNG = re.compile(r"^[A-Za-z0-9_.-]{1,80}\.png$")
+MODOS_ESCRITOS = ("balao", "narracao", "texto")              # falas que o sistema reescreveu na imagem (as demais só têm tooltip)
 
 
-def _blocos(info: object) -> List[Dict[str, Any]]:
-    """Trechos traduzidos de uma imagem, validados (o JSON em disco é dado, não confiável). Posições em % da imagem."""
+def _ler_traducao(pasta: Path) -> Optional[Dict[str, Any]]:
+    """Lê traducao.json (gerado pelo tradutor em Node). Arquivo ausente, antigo ou quebrado = sem tradução."""
+    arquivo = pasta / NOME_TRADUCAO
     try:
-        largura, altura = float(info["w"]), float(info["h"])  # type: ignore[index]
-        blocos = info["blocos"]  # type: ignore[index]
-        if largura <= 0 or altura <= 0 or not isinstance(blocos, list):
-            return []
-    except (KeyError, TypeError, ValueError):
-        return []
+        if not legado.traducao_nova(arquivo):
+            return None
+        dados = json.loads(arquivo.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return dados if isinstance(dados, dict) and isinstance(dados.get("pages"), list) else None
+
+
+def _num(v: Any, minimo: float, maximo: float, padrao: float = 0.0) -> float:
+    try:
+        n = float(v)
+    except (TypeError, ValueError):
+        return padrao
+    return n if n == n and minimo <= n <= maximo else padrao        # n == n: descarta NaN
+
+
+def _cor(v: Any, padrao: Optional[str]) -> Optional[str]:
+    return v if isinstance(v, str) and _COR.match(v) else padrao
+
+
+def _caixa(v: Any, largura: float, altura: float) -> Optional[List[float]]:
+    """[x, y, w, h] em px da imagem, validado (o JSON em disco é dado, não confiável)."""
+    if not isinstance(v, (list, tuple)) or len(v) != 4:
+        return None
+    try:
+        x, y, w, h = (float(n) for n in v)
+    except (TypeError, ValueError):
+        return None
+    if not all(math.isfinite(n) for n in (x, y, w, h)) or w <= 0 or h <= 0 or w > 4 * largura or h > 4 * altura:
+        return None
+    return [round(x, 1), round(y, 1), round(w, 1), round(h, 1)]
+
+
+def _falas_usuario(pagina: Dict[str, Any], largura: float, altura: float) -> List[Dict[str, Any]]:
+    """Leitura do USUÁRIO: só o necessário para desenhar a tradução (caixa, cor, fonte, texto). Nada de original, status ou alerta."""
     saida: List[Dict[str, Any]] = []
-    for indice, b in enumerate(blocos[:MAX_BLOCOS_POR_IMAGEM]):
-        try:
-            x, y, w, h = (float(b[k]) for k in ("x", "y", "w", "h"))
-            texto = str(b["traduzido"])[:1200]
-            fundo = b["fundo"] if isinstance(b.get("fundo"), str) and _COR.match(b["fundo"]) else "#ffffff"
-            cor = b["cor"] if isinstance(b.get("cor"), str) and _COR.match(b["cor"]) else "#111111"
-        except (KeyError, TypeError, ValueError, AttributeError):
+    for u in (pagina.get("units") or [])[:MAX_FALAS_POR_IMAGEM]:
+        if not isinstance(u, dict) or not isinstance(u.get("render"), dict):
             continue
-        if w <= 0 or h <= 0 or not texto.strip():
+        r, texto = u["render"], u.get("translation")
+        caixa = _caixa(r.get("box"), largura, altura)
+        if r.get("mode") not in MODOS_ESCRITOS or not isinstance(texto, str) or not texto.strip() or caixa is None:
             continue
-        try:
-            fonte = float(b["fonte"]) if b.get("fonte") else 0.0
-        except (TypeError, ValueError):
-            fonte = 0.0
-        alertas = b.get("alertas")
-        livre = None
-        try:                                                   # miolo livre do balão (px da imagem → %), só se contiver a caixa
-            lv = [float(v) for v in b["livre"]] if isinstance(b.get("livre"), list) and len(b["livre"]) == 4 else None
-            if lv and lv[2] > 0 and lv[3] > 0 and lv[0] <= x + 1 and lv[1] <= y + 1 and lv[0] + lv[2] >= x + w - 1 and lv[1] + lv[3] >= y + h - 1:
-                livre = [round(lv[0] / largura * 100, 3), round(lv[1] / altura * 100, 3), round(lv[2] / largura * 100, 3), round(lv[3] / altura * 100, 3)]
-        except (TypeError, ValueError):
-            livre = None
-        try:
-            refer = float(b.get("refer") or 0)
-        except (TypeError, ValueError):
-            refer = 0.0
         saida.append({
-            "i": indice,
-            "x": round(x / largura * 100, 3), "y": round(y / altura * 100, 3),
-            "w": round(w / largura * 100, 3), "h": round(h / altura * 100, 3),
-            "fundo": fundo, "cor": cor, "texto": texto, "original": str(b.get("original", ""))[:600],
-            "fonte": round(fonte, 1) if 4 <= fonte <= 600 else 0,
-            "livre": livre, "refer": round(refer, 1) if 3 <= refer <= 600 else 0,
-            "alerta": "; ".join(str(a)[:80] for a in alertas[:5]) if isinstance(alertas, list) and alertas else "",
+            "modo": r["mode"], "caixa": caixa, "tinta": _cor(r.get("ink"), "#111111"), "contorno": _cor(r.get("stroke"), None),
+            "fonteMax": round(_num(r.get("fontMax"), 4, 600, 40.0), 1), "maiuscula": bool(r.get("upper")), "texto": texto[:1200],
         })
+    return saida
+
+
+def _falas_admin(pagina: Dict[str, Any], largura: float, altura: float) -> List[Dict[str, Any]]:
+    """Leitura da BIBLIOTECA (verificação): tudo que serve para conferir cada fala (original, status, OCR, região, motivo)."""
+    saida: List[Dict[str, Any]] = []
+    for u in (pagina.get("units") or [])[:MAX_FALAS_POR_IMAGEM]:
+        if not isinstance(u, dict):
+            continue
+        r = u["render"] if isinstance(u.get("render"), dict) else {}
+        ocr = u["ocr"] if isinstance(u.get("ocr"), dict) else {}
+        saida.append({
+            "id": str(u.get("id", ""))[:40], "ordem": int(_num(u.get("order"), 0, 100000)),
+            "estado": r.get("flag") if r.get("flag") in ("ok", "revisar", "erro") else "ok",
+            "status": str(u.get("status", ""))[:20], "erro": str(u.get("error") or "")[:300],
+            "original": str(u.get("source") or "")[:1200], "texto": str(u.get("translation") or "")[:1200],
+            "regiao": _caixa(u.get("bbox"), largura, altura), "balaoId": u.get("balloonId") if isinstance(u.get("balloonId"), int) else None,
+            "modo": str(r.get("mode") or "nenhum")[:12], "motivo": str(r.get("reason") or "")[:30],
+            "tradModo": str(u.get("mode") or "")[:12], "glossario": [str(g)[:60] for g in (u.get("glossary") or [])[:10]],
+            "ocr": {
+                "status": str(ocr.get("status", ""))[:12], "motor": str(ocr.get("engine", ""))[:20],
+                "confianca": round(_num(ocr.get("confidence"), 0, 100, 0.0), 1), "editado": bool(ocr.get("edited")),
+            } if ocr else None,
+            "junta": bool(r.get("join")),
+        })
+    return saida
+
+
+def _baloes_admin(pagina: Dict[str, Any]) -> List[Dict[str, Any]]:
+    saida: List[Dict[str, Any]] = []
+    for b in (pagina.get("balloons") or [])[:MAX_BALOES_POR_IMAGEM]:
+        try:
+            poligono = [[round(float(x), 1), round(float(y), 1)] for x, y in b["polygon"][:300]]
+            saida.append({
+                "id": int(b["id"]), "tipo": str(b.get("kind", ""))[:20], "certeza": str(b.get("certainty", ""))[:12], "poligono": poligono,
+            })
+        except (KeyError, TypeError, ValueError):
+            continue
     return saida
 
 
@@ -185,8 +222,13 @@ def pasta_do_capitulo(raiz: Path, rel: str) -> Optional[Path]:
     return pasta
 
 
-def dados_do_capitulo(raiz: Path, rel: str) -> Optional[Dict[str, Any]]:
-    """Tudo que o leitor global precisa de um capítulo: título e, para cada imagem, nome, medidas e trechos traduzidos."""
+def dados_do_capitulo(raiz: Path, rel: str, admin: bool = False) -> Optional[Dict[str, Any]]:
+    """Tudo que o leitor global precisa de um capítulo.
+
+    `admin=False` (leitura do usuário: celular, app e exportação): para cada imagem só a tradução já pronta para desenhar.
+    `admin=True` (leitura da biblioteca, no notebook): além disso, regiões, balões, texto original, status e informações
+    do processamento. Os dois modos nunca se misturam: o modo do usuário não carrega nenhum dado de verificação.
+    """
     pasta = pasta_do_capitulo(raiz, rel)
     if pasta is None:
         return None
@@ -200,20 +242,34 @@ def dados_do_capitulo(raiz: Path, rel: str) -> Optional[Dict[str, Any]]:
     rotulo = org.rotulo_capitulo(d["numero"], d["titulo"])
     nome_obra = d["obra"] or obra or ""
     traducao = _ler_traducao(pasta)
+    por_arquivo = {p["file"]: p for p in (traducao or {}).get("pages", []) if isinstance(p, dict) and isinstance(p.get("file"), str)}
     imagens = []
     for n, nome in enumerate(nomes, 1):
-        info = traducao.get(nome)
-        blocos = _blocos(info) if info else []
-        medidas = None
-        if blocos:
-            try:
-                medidas = [round(float(info["w"])), round(float(info["h"]))]  # type: ignore[index]
-            except (KeyError, TypeError, ValueError):
-                blocos = []
-        imagens.append({"n": n, "arq": nome, "medidas": medidas, "blocos": blocos})
-    return {
+        pagina = por_arquivo.get(nome)
+        largura, altura = (_num(pagina.get("width"), 1, 100000), _num(pagina.get("height"), 1, 100000)) if pagina else (0.0, 0.0)
+        item: Dict[str, Any] = {"n": n, "arq": nome, "medidas": None, "patch": None, "falas": []}
+        if pagina and largura and altura:
+            item["medidas"] = [round(largura), round(altura)]
+            if isinstance(pagina.get("patch"), str) and _PNG.match(pagina["patch"]):
+                item["patch"] = pagina["patch"]
+            item["falas"] = _falas_usuario(pagina, largura, altura)      # o que é desenhado: idêntico nos dois modos
+            if admin:
+                item["conferencia"] = _falas_admin(pagina, largura, altura)
+                item["baloes"] = _baloes_admin(pagina)
+                item["erro"] = str(pagina.get("error") or "")[:300]
+        imagens.append(item)
+    dados: Dict[str, Any] = {
         "rel": "/".join(partes), "obra": nome_obra, "rotulo": rotulo,
         "titulo": f"{nome_obra} — {rotulo}" if nome_obra else rotulo or pasta.name,
-        "imagens": imagens, "refinando": refinando(pasta),
+        "imagens": imagens, "admin": bool(admin), "traduzido": traducao is not None,
         "sub": NOME_IMG + "/" if pasta_imagens(pasta) != pasta else "",     # prefixo das imagens dentro de `base`
+        "subLimpeza": PASTA_LIMPEZA,                                          # prefixo dos PNG de limpeza dentro de `base`
     }
+    if admin and traducao is not None:
+        dados["verificacao"] = {
+            "motor": str(traducao.get("engine") or "")[:20], "provedor": str(traducao.get("provider") or "")[:60],
+            "gerado": str(traducao.get("generatedAt") or "")[:30],
+            "contagens": {str(k)[:12]: int(v) for k, v in (traducao.get("counts") or {}).items() if isinstance(v, (int, float))},
+            "avisos": [str(a)[:200] for a in (traducao.get("warnings") or [])[:20]],
+        }
+    return dados

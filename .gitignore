@@ -11,6 +11,7 @@ dados/
 *.zip
 
 # ---- ambiente e caches ----
+tradutor/node_modules/
 .venv/
 venv/
 env/
@@ -34,6 +35,7 @@ android-app/node_modules/
 android-app/android/
 # cópias geradas de web/leitor (scripts/copiar_leitor.py)
 android-app/www/leitor.html
+android-app/www/layout.js
 android-app/www/leitor.js
 android-app/www/leitor.css
 android-app/www/comic-neue-700.woff2

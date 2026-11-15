@@ -20,7 +20,6 @@ import secrets
 import subprocess
 import sys
 import time
-import traceback
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -28,11 +27,11 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 from baixador.biblioteca import acervo as biblioteca
-from baixador.traducao import config, edicao, gemini, hymt, inteligencia as ia, openrouter, refino
+from baixador.traducao import config, executor, legado
 from baixador.navegador import navegadores
 from baixador.biblioteca import capa as capa_obra, estrutura, exportar, obra as dados_obra, organizacao
 from baixador.servidor.base import (
-    CSS, ESTATICOS_EDICAO, ESTATICOS_LEITOR, JS, ServidorSilencioso, ler_capa, ler_web, pagina_leitor,
+    CSS, ESTATICOS_LEITOR, ESTATICOS_VERIFICACAO, JS, ServidorSilencioso, ler_capa, ler_web, pagina_leitor,
 )
 from baixador.servidor import celular as celular_servidor
 from baixador.servidor.celular import ControleCelular
@@ -42,8 +41,7 @@ from baixador.configuracao import ARQUIVO_CELULAR, DADOS, PASTA_PADRAO, RAIZ, mi
 from baixador.nucleo.imagens import pasta_do_conjunto
 from baixador.biblioteca.capitulo import dados_do_capitulo, listar_imagens
 from baixador.navegador.manual import ESTADOS_ATIVOS, SessaoManual
-from baixador.traducao import pipeline
-from baixador.traducao.pipeline import IDIOMAS_DESTINO, IDIOMAS_ORIGEM, Motores, TarefaTraducao
+from baixador.traducao.executor import TarefaTraducao
 
 PAGINA = "notebook/app.html"
 ESTATICOS = {
@@ -56,7 +54,7 @@ ESTATICOS = {
     "/estatico/biblioteca.js": ("notebook/biblioteca.js", JS),
     "/estatico/celular.js": ("notebook/celular.js", JS),
     **ESTATICOS_LEITOR,
-    **ESTATICOS_EDICAO,
+    **ESTATICOS_VERIFICACAO,
 }
 TIPOS_IMAGEM = {
     ".png": "image/png",
@@ -223,7 +221,7 @@ class Manipulador(BaseHTTPRequestHandler):
         """`/api/leitura?c=<Obra/Capítulo>[&r=<id da raiz>]`: título, imagens e trechos traduzidos de um capítulo."""
         identificador = (consulta.get("r") or [ID_BIBLIOTECA])[0][:40]
         raiz = self.server.leitores.get(identificador)  # type: ignore[attr-defined]
-        dados = dados_do_capitulo(raiz, (consulta.get("c") or [""])[0]) if raiz is not None else None
+        dados = dados_do_capitulo(raiz, (consulta.get("c") or [""])[0], admin=True) if raiz is not None else None   # leitura da biblioteca = verificação
         if dados is None:
             return self._negar(404, "Capítulo não encontrado.")
         base = f"/ler/{quote(identificador)}/" + "/".join(quote(p) for p in dados["rel"].split("/")) + "/"
@@ -324,11 +322,7 @@ class Manipulador(BaseHTTPRequestHandler):
             return self._json(200, tarefa.instantaneo(max(self._numero(consulta, "log", 0), 0)))
 
         if caminho == "/api/traducao/config":
-            return self._json(200, {**config.ler(), "motores": config.MOTORES, "modelos": config.MODELOS})
-
-        if caminho == "/api/refinar/pendentes":
-            alvos = self._alvos_refino({})
-            return self._json(200, {"capitulos": len(alvos)})
+            return self._json(200, {**config.ler(), "motores": config.MOTORES, "modelos": config.MODELOS, "idiomas": executor.IDIOMAS})
 
         if caminho == "/api/manual/estado":
             return self._json(200, manual.instantaneo(
@@ -379,30 +373,12 @@ class Manipulador(BaseHTTPRequestHandler):
         if caminho == "/api/traduzir":
             return self._traduzir(dados)
 
-        if caminho == "/api/traducao/reajustar":
-            return self._reajustar(dados)
-
         if caminho == "/api/traducao/config":
             try:
                 nova = config.salvar(dados.get("motor"), dados.get("modelo"))
             except ValueError as erro:
                 return self._negar(400, str(erro))
-            return self._json(200, {**nova, "motores": config.MOTORES, "modelos": config.MODELOS})
-
-        if caminho == "/api/refinar":
-            alvos = self._alvos_refino(dados)
-            try:
-                n = self.server.traducao.iniciar_refino(alvos)  # type: ignore[attr-defined]
-            except ErroBaixador as erro:
-                return self._negar(422, str(erro))
-            except RuntimeError as erro:
-                return self._negar(409, str(erro))
-            return self._json(200, {"ok": True, "capitulos": n})
-
-        if caminho == "/api/traducao/openrouter":
-            return self._json(200, openrouter.verificar())
-        if caminho == "/api/traducao/gemini":
-            return self._json(200, gemini.verificar())
+            return self._json(200, {**nova, "motores": config.MOTORES, "modelos": config.MODELOS, "idiomas": executor.IDIOMAS})
 
         if caminho == "/api/traducao/excluir":
             if self.server.traducao.estado == "executando":  # type: ignore[attr-defined]
@@ -418,11 +394,7 @@ class Manipulador(BaseHTTPRequestHandler):
             apagadas = 0
             try:
                 for alvo in alvos:
-                    arquivo = alvo / "traducao.json"
-                    if arquivo.is_file() and not arquivo.is_symlink():
-                        arquivo.unlink()
-                        apagadas += 1
-                    pipeline.apagar_residuos(alvo)
+                    apagadas += executor.apagar_traducao(alvo)
             except OSError as erro:
                 return self._negar(500, f"Não foi possível apagar a tradução: {erro}")
             if not apagadas:
@@ -430,8 +402,8 @@ class Manipulador(BaseHTTPRequestHandler):
             biblioteca.esquecer_versao()
             return self._json(200, {"ok": True, "traducoes": apagadas})
 
-        if caminho == "/api/traducao/hy":
-            return self._json(200, hymt.verificar(str(dados.get("modelo") or "") or None))
+        if caminho == "/api/traducao/verificar":                  # o motor escolhido (ou o pedido) está pronto?
+            return self._json(200, executor.verificar(str(dados.get("motor") or "") or None, str(dados.get("modelo") or "") or None))
 
         if caminho == "/api/traducao/cancelar":
             self.server.traducao.parar()  # type: ignore[attr-defined]
@@ -445,9 +417,6 @@ class Manipulador(BaseHTTPRequestHandler):
 
         if caminho == "/api/traducao/abrir-leitor":
             return self._abrir_leitor(self.server.traducao.pasta)  # type: ignore[attr-defined]
-
-        if caminho.startswith("/api/bloco/"):
-            return self._editar_bloco(caminho, dados)
 
         if caminho.startswith("/api/manual/"):
             return self._post_manual(manual, caminho[len("/api/manual/"):], dados)
@@ -608,9 +577,6 @@ class Manipulador(BaseHTTPRequestHandler):
     def _traduzir(self, dados: Dict[str, Any]) -> None:
         tarefa = self.server.traducao  # type: ignore[attr-defined]
         raiz: Path = self.server.raiz  # type: ignore[attr-defined]
-        de, para = str(dados.get("de", "en")), str(dados.get("para", "pt"))
-        if de not in IDIOMAS_ORIGEM or para not in IDIOMAS_DESTINO or de == para:
-            return self._negar(400, "O destino da tradução é sempre o português; escolha um idioma de origem diferente.")
         lote = str(dados.get("lote", ""))
         try:
             if lote in ("todos", "pendentes"):
@@ -622,38 +588,24 @@ class Manipulador(BaseHTTPRequestHandler):
                 ]
                 if not lista:
                     return self._negar(404, "Nenhum capítulo para traduzir.")
-                tarefa.iniciar_lote(lista, de, para)
+                tarefa.iniciar_lote(lista)
                 return self._json(200, {"ok": True, "conjuntos": len(lista)})
-            if isinstance(dados.get("rels"), list):                      # capítulos escolhidos à mão (retraduzir)
+            if isinstance(dados.get("rels"), list):                      # capítulos escolhidos à mão (traduzir de novo)
                 pedidos = {str(r)[:300] for r in dados["rels"]}
                 lista = [raiz / c["rel"] for o in biblioteca.listar(raiz)["obras"] for c in o["capitulos"] if c["rel"] in pedidos]
                 if not lista:
                     return self._negar(404, "Nenhum dos capítulos escolhidos foi encontrado.")
-                tarefa.iniciar_lote(lista, de, para)
+                tarefa.iniciar_lote(lista)
                 return self._json(200, {"ok": True, "conjuntos": len(lista)})
             achado = next((c for o in biblioteca.listar(raiz)["obras"] for c in o["capitulos"] if c["rel"] == str(dados.get("rel", ""))), None)
             if achado is None:
                 return self._negar(404, "Capítulo não encontrado. Baixe as imagens antes de traduzir.")
-            if dados.get("completar"):
-                if not achado.get("incompleta"):
-                    return self._negar(409, "Este capítulo não tem páginas sem tradução para completar.")
-                tarefa.iniciar(raiz / achado["rel"], de, para, completar=True)
-            else:
-                tarefa.iniciar(raiz / achado["rel"], de, para)
+            tarefa.iniciar(raiz / achado["rel"])
         except RuntimeError as erro:
             return self._negar(409, str(erro))
+        except ErroBaixador as erro:
+            return self._negar(422, str(erro))
         return self._json(200, {"ok": True})
-
-    def _alvos_refino(self, dados: Dict[str, Any]) -> List[Path]:
-        """Capítulos traduzidos (opcionalmente de uma obra ou um só) que ainda têm o que refinar."""
-        raiz: Path = self.server.raiz  # type: ignore[attr-defined]
-        obra, rel = str(dados.get("obra", ""))[:120], str(dados.get("rel", ""))[:300]
-        lista = [
-            raiz / c["rel"] for o in biblioteca.listar(raiz)["obras"]
-            if not obra or organizacao._chave(o["nome"]) == organizacao._chave(obra)
-            for c in o["capitulos"] if c["traduzido"] and (not rel or c["rel"] == rel)
-        ]
-        return [p for p in lista if refino.pendentes(p) > 0]
 
     def _exportar(self, consulta: Dict[str, List[str]]) -> None:
         """Monta o ZIP num arquivo temporário (não na memória) e o envia como download. Só lê a biblioteca."""
@@ -667,69 +619,6 @@ class Manipulador(BaseHTTPRequestHandler):
         arquivo, tamanho, nome = pronto
         with arquivo:
             exportar.transmitir(self, arquivo, tamanho, nome)
-
-    def _reajustar(self, dados: Dict[str, Any]) -> None:
-        raiz: Path = self.server.raiz  # type: ignore[attr-defined]
-        if self.server.traducao.bloqueia_edicao:  # type: ignore[attr-defined]
-            return self._negar(409, "Há uma tradução em andamento; espere terminar.")
-        obra = str(dados.get("obra", ""))[:120]
-        rel = str(dados.get("rel", ""))[:300]
-        rels = {str(r)[:300] for r in dados["rels"]} if isinstance(dados.get("rels"), list) else None
-        alvos = [
-            raiz / c["rel"] for o in biblioteca.listar(raiz)["obras"]
-            if not obra or organizacao._chave(o["nome"]) == organizacao._chave(obra)
-            for c in o["capitulos"]
-            if c["traduzido"] and (not rel or c["rel"] == rel) and (rels is None or c["rel"] in rels)
-        ]
-        alvos = [a for a in alvos if (a / "traducao.json").is_file()]
-        if not alvos:
-            return self._negar(404, "Não há tradução feita para reajustar.")
-        total = {"imagens": 0, "trechos": 0}
-        try:
-            for alvo in alvos:
-                r = edicao.reajustar_pasta(alvo)
-                total["imagens"] += r["imagens"]
-                total["trechos"] += r["trechos"]
-        except ErroBaixador as erro:
-            return self._negar(422, str(erro))
-        total["conjuntos"] = len(alvos)
-        return self._json(200, total)
-
-    def _editar_bloco(self, caminho: str, dados: Dict[str, Any]) -> None:
-        pasta = self._pasta_do_leitor(str(dados.get("base", ""))[:400])
-        if pasta is None or not pasta.is_dir():
-            return self._negar(404, "Conjunto não encontrado. Reabra o leitor pelo programa.")
-        if self.server.traducao.bloqueia_edicao:  # type: ignore[attr-defined]
-            return self._negar(409, "Há uma tradução em andamento; espere terminar para editar.")
-        if caminho == "/api/bloco/capitulo":
-            try:
-                antigo = json.loads((pasta / "traducao.json").read_text(encoding="utf-8"))
-                de, para = antigo.get("de", "en"), "pt"          # destino sempre português, mesmo em traduções antigas
-            except (OSError, ValueError, AttributeError):
-                de, para = "en", "pt"
-            if de not in IDIOMAS_ORIGEM or de == para:
-                de, para = "en", "pt"
-            try:
-                self.server.traducao.iniciar(pasta, de, para)  # type: ignore[attr-defined]
-            except RuntimeError as erro:
-                return self._negar(409, str(erro))
-            return self._json(200, {"ok": True})
-        try:
-            resultado = edicao.editar(pasta, caminho[len("/api/bloco/"):], dados, self.server.motores)  # type: ignore[attr-defined]
-        except ErroBaixador as erro:
-            return self._negar(422, str(erro))
-        except ModuleNotFoundError as erro:
-            traceback.print_exc()
-            return self._negar(
-                500,
-                f"Falta o pacote Python '{erro.name}' neste ambiente. Com o .venv ativado, rode: "
-                "pip install -r requirements-traducao.txt (e reinicie o programa).",
-            )
-        except Exception as erro:
-            traceback.print_exc()
-            return self._negar(500, f"Erro inesperado ({erro.__class__.__name__}: {str(erro)[:160]}). Detalhes no terminal.")
-        return self._json(200, resultado)
-
 
     def _abrir_leitor(self, pasta: Optional[Path]) -> None:
         """Abre no navegador padrão o leitor global no capítulo da `pasta` (que precisa ter imagens)."""
@@ -797,12 +686,9 @@ class Manipulador(BaseHTTPRequestHandler):
                     }
                 ao_concluir: Optional[Callable[[List[Path]], None]] = None
                 if bool(dados.get("traduzir", False)) and bool(dados.get("continuar", False)) and organizar is not None:
-                    de, para = str(dados.get("trad_de", "en")), str(dados.get("trad_para", "pt"))
-                    if de not in IDIOMAS_ORIGEM or para not in IDIOMAS_DESTINO or de == para:
-                        return self._negar(400, "Escolha idiomas de origem e de destino diferentes para a tradução automática.")
                     tarefa = self.server.traducao  # type: ignore[attr-defined]
 
-                    ao_concluir = lambda pastas, tarefa=tarefa, de=de, para=para: tarefa.iniciar_lote(pastas, de, para)  # noqa: E731
+                    ao_concluir = lambda pastas, tarefa=tarefa: tarefa.iniciar_lote(pastas)  # noqa: E731
 
                 manual.automatico(
                     url, pasta if organizar is not None else pasta_do_conjunto(pasta, self._conjunto_dos_dados(dados)),
@@ -899,7 +785,6 @@ def criar_servidor(
     servidor.raiz = Path(raiz) if raiz is not None else PASTA_PADRAO  # type: ignore[attr-defined]
     servidor.manual = manual if manual is not None else SessaoManual()  # type: ignore[attr-defined]
     servidor.traducao = TarefaTraducao()  # type: ignore[attr-defined]
-    servidor.motores = Motores()  # type: ignore[attr-defined]
     servidor.celular = celular if celular is not None else ControleCelular(servidor.raiz)  # type: ignore[attr-defined]
     servidor.leitores = {ID_BIBLIOTECA: servidor.raiz}  # type: ignore[attr-defined]
     servidor.token = token  # type: ignore[attr-defined]
@@ -930,14 +815,14 @@ def abrir_interface(abrir_navegador: bool = True) -> int:
             print(f"Aviso (biblioteca): {erro}")
     except Exception as erro:
         print(f"Aviso: não consegui mover as imagens para img/ ({erro.__class__.__name__}); nada foi perdido e o leitor continua achando.")
-    try:                                                  # glossários antigos de cada capítulo -> um só na pasta da obra
-        relatorio = ia.migrar_glossarios(PASTA_PADRAO)
-        if relatorio["obras"]:
-            print(f"Glossário: unificado por obra em {len(relatorio['obras'])} obra(s): {', '.join(relatorio['obras'])}.")
+    try:                                                  # arquivos do sistema de tradução antigo (formato incompatível com o novo)
+        relatorio = legado.limpar(PASTA_PADRAO)
+        if relatorio["apagados"]:
+            print(f"Tradução: {len(relatorio['apagados'])} arquivo(s) do sistema antigo removido(s) da biblioteca; reprocesse os capítulos na aba Traduções.")
         for erro in relatorio["erros"]:
-            print(f"Aviso (glossário): {erro}")
+            print(f"Aviso (tradução antiga): {erro}")
     except Exception as erro:
-        print(f"Aviso: não consegui unificar os glossários ({erro.__class__.__name__}); nada foi perdido.")
+        print(f"Aviso: não consegui limpar os arquivos da tradução antiga ({erro.__class__.__name__}); nada foi perdido.")
     token = secrets.token_urlsafe(24)
     atualizador = Atualizador(RAIZ, DADOS / "apk")
     servidor = criar_servidor(token, celular=ControleCelular(PASTA_PADRAO, ARQUIVO_CELULAR, atualizador))

@@ -20,7 +20,7 @@ from urllib.parse import urlsplit
 
 from baixador.biblioteca import capa, obra as dados_obra, organizacao as org
 from baixador.nucleo.erros import ErroBaixador
-from baixador.biblioteca.capitulo import NOME_AVISO, NOME_IMG, NOME_TRADUCAO, _varrer
+from baixador.biblioteca.capitulo import NOME_IMG, NOME_TRADUCAO, _varrer
 
 CORES_DE_LINHA = 6          # o app associa cada obra a uma de 6 cores de linha (índice estável)
 MAX_FALTANDO = 400          # não lista "faltando" de séries com saltos absurdos (ex.: capítulos 1 e 9999)
@@ -63,7 +63,7 @@ def listar(raiz: Path) -> Dict[str, Any]:
             {
                 "rel": c["rel"], "numero": c["numero"], "titulo": c["titulo"],
                 "rotulo": org.rotulo_capitulo(c["numero"], c["titulo"]) if c["numero"] is not None or not c["antigo"] else c["rel"],
-                "imagens": len(c["nomes"]), "traduzido": c["traduzido"], "incompleta": c["incompleta"], "antigo": c["antigo"],
+                "imagens": len(c["nomes"]), "traduzido": c["traduzido"], "incompleta": c["incompleta"], "revisar": c["revisar"], "antigo": c["antigo"],
                 "capa": c["nomes"][0], "quando": c["quando"],
             }
             for c in g["capitulos"]
@@ -119,7 +119,7 @@ def versao(raiz: Path, validade: float = 1.0) -> str:
             h.update(f"{nivel1.name}|{_mtime(nivel1)}|{_mtime(nivel1 / NOME_TRADUCAO)}|{_mtime(nivel1 / org.NOME_META)};".encode("utf-8", "replace"))
             for nivel2 in _subpastas(nivel1):
                 h.update(
-                    f"{nivel1.name}/{nivel2.name}|{_mtime(nivel2)}|{_mtime(nivel2 / NOME_TRADUCAO)}|{_mtime(nivel2 / NOME_AVISO)}|{_mtime(nivel2 / NOME_IMG)}|{_mtime(nivel2 / org.NOME_META)};"
+                    f"{nivel1.name}/{nivel2.name}|{_mtime(nivel2)}|{_mtime(nivel2 / NOME_TRADUCAO)}|{_mtime(nivel2 / 'traducao')}|{_mtime(nivel2 / NOME_IMG)}|{_mtime(nivel2 / org.NOME_META)};"
                     .encode("utf-8", "replace")
                 )
         valor = h.hexdigest()[:16]

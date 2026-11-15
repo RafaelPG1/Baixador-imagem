@@ -1,0 +1,28 @@
+{
+  "name": "baixador-tradutor",
+  "version": "0.1.0",
+  "description": "Sistema de tradução de mangá/manhwa (inglês para português) do projeto Tradução, usado pelo Baixador de Imagens.",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.9"
+  },
+  "scripts": {
+    "processar": "node src/processar-capitulo.js",
+    "test": "node --test",
+    "postinstall": "node scripts/prune-onnx.js"
+  },
+  "dependencies": {
+    "@techstark/opencv-js": "5.0.0-release.1",
+    "@tesseract.js-data/eng": "1.0.0",
+    "sharp": "0.35.5",
+    "subtlex-word-frequencies": "2.0.0",
+    "tesseract.js": "7.0.0"
+  },
+  "optionalDependencies": {
+    "@gutenye/ocr-node": "1.4.9"
+  },
+  "overrides": {
+    "sharp": "$sharp"
+  }
+}

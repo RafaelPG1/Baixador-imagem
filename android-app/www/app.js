@@ -69,12 +69,13 @@
       for (var j = 0; j < dados.imagens.length; j++) {
         var im = dados.imagens[j];
         if (z.tem(c.dir + '/img/' + im.arq)) pares.push({ chave: c.id + '|' + im.arq, blob: await z.blob(c.dir + '/img/' + im.arq, tipoDe(im.arq)) });
+        if (im.patch && z.tem(c.dir + '/limpeza/' + im.patch)) pares.push({ chave: c.id + '|limpeza/' + im.patch, blob: await z.blob(c.dir + '/limpeza/' + im.patch, 'image/png') });   // texto original apagado
       }
       var d = await bd(), t = d.transaction(['caps', 'imgs', 'obras'], 'readwrite');
       t.objectStore('imgs').delete(faixaCap(c.id));
       pares.forEach(function (p) { t.objectStore('imgs').put(p); });
       t.objectStore('caps').put({
-        id: c.id, obra: nomeObra, rotulo: c.rotulo, numero: c.numero, titulo: c.titulo, paginas: pares.length, traduzido: !!c.traduzido,
+        id: c.id, obra: nomeObra, rotulo: c.rotulo, numero: c.numero, titulo: c.titulo, paginas: dados.imagens.length, traduzido: !!c.traduzido,
         dados: { titulo: dados.titulo, imagens: dados.imagens }, importado: Date.now(),
       });
       var atual = await pedido(t.objectStore('obras').get(nomeObra));

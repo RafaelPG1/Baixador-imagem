@@ -363,7 +363,7 @@ $('formulario').addEventListener('submit', async (ev) => {
       }
       await chamar('/api/manual/automatico', {...comum, pasta: $('pasta').value, espera: Number($('espera').value || 30), ignorar_comentarios: $('sem-comentarios').checked,
         continuar: atualizando || $('continuar-auto').checked, modo_busca: $('modo-busca').value,
-        traduzir: !atualizando && $('traduzir-auto').checked && $('continuar-auto').checked, trad_de: $('trad-de').value, trad_para: $('trad-para').value});
+        traduzir: !atualizando && $('traduzir-auto').checked && $('continuar-auto').checked});
     }
     $('iniciar').disabled = true;
   } catch (e) { mensagem(e.message); }
@@ -416,7 +416,7 @@ const Baixar = {
       modo = 'auto'; document.querySelector('input[name=modo][value=auto]').checked = true; aplicarModo();   // "Atualizar" sempre usa o automático, qualquer que seja o modo escolhido
       $('continuar-auto').checked = true; $('nota-continuar').hidden = false; opcaoAtualizar();
       await chamar('/api/manual/automatico', {...comum, pasta: $('pasta').value, espera: Number($('espera').value || 30), ignorar_comentarios: $('sem-comentarios').checked,
-        continuar: true, atualizar: true, modo_busca: $('modo-busca').value, traduzir: $('traduzir-auto').checked, trad_de: $('trad-de').value, trad_para: $('trad-para').value});
+        continuar: true, atualizar: true, modo_busca: $('modo-busca').value, traduzir: $('traduzir-auto').checked});
       aviso(`Atualizando “${nomeObra}” no modo automático: o último capítulo salvo não é baixado de novo: o programa aperta em “próximo” e baixa só os novos.`);
       atualizarJa();
       return true;

@@ -12,7 +12,7 @@ Python (biblioteca padrão) servindo HTML/CSS/JS puros, sem etapa de build e sem
 
 ## Users
 
-Uma única pessoa (uso pessoal), brasileira, que baixa capítulos de histórias em imagens (webtoon/mangá) de sites que ela usa, organiza por obra e capítulo, traduz o texto das imagens (inglês → português) com Argos no próprio computador e lê depois. Dois cenários de uso:
+Uma única pessoa (uso pessoal), brasileira, que baixa capítulos de histórias em imagens (webtoon/mangá) de sites que ela usa, organiza por obra e capítulo, traduz o texto das imagens (inglês → português) com o sistema de tradução local (tradutor/, Node.js) e lê depois. Dois cenários de uso:
 - No notebook (Windows, PowerShell, navegador Brave): baixar, organizar a biblioteca, corrigir traduções. Tarefa de trabalho, com atenção, mouse e teclado.
 - No celular, em casa, no mesmo Wi-Fi: só ler, deitado, de relance, com uma mão, às vezes à noite.
 

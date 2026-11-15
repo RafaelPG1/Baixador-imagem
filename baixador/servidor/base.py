@@ -18,13 +18,14 @@ FONTE = "font/woff2"
 
 # URL pública → (arquivo dentro de web/, tipo). Nada de segredo nesses arquivos; só o que está aqui é entregue.
 ESTATICOS_LEITOR: Dict[str, Tuple[str, str]] = {
+    "/estatico/layout.js": ("leitor/layout.js", JS),
     "/estatico/leitor.css": ("leitor/leitor.css", CSS),
     "/estatico/leitor.js": ("leitor/leitor.js", JS),
     "/estatico/comic-neue-700.woff2": ("compartilhado/fontes/comic-neue-700.woff2", FONTE),   # Comic Neue Bold (OFL), embutida no leitor
 }
-ESTATICOS_EDICAO: Dict[str, Tuple[str, str]] = {          # só o servidor do notebook entrega (edição é do notebook)
-    "/estatico/edicao.css": ("leitor/edicao.css", CSS),
-    "/estatico/edicao.js": ("leitor/edicao.js", JS),
+ESTATICOS_VERIFICACAO: Dict[str, Tuple[str, str]] = {      # leitura da biblioteca (verificação): só o servidor do notebook entrega
+    "/estatico/verificacao.css": ("leitor/verificacao.css", CSS),
+    "/estatico/verificacao.js": ("leitor/verificacao.js", JS),
 }
 
 TIPOS_IMAGEM = {

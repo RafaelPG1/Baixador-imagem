@@ -15,102 +15,64 @@
   var principal = $('paginas');
   var figuras = [];
 
-  /* ---------- ajuste do texto traduzido dentro de cada caixa ---------- */
-  var NBSP = ' ';
-  var BALANCEIA = !!(window.CSS && CSS.supports && CSS.supports('text-wrap', 'balance'));
-  var FRACAS = /^(a|o|e|à|às|ao|aos|as|os|um|uma|uns|de|do|da|dos|das|em|no|na|nos|nas|por|pra|pro|que|se|me|te|lhe|eu|tu|ele|ela|mas|ou|já|só|há|é|nem|com|sem|até|meu|seu|teu|sua|tua|esse|essa|este|esta|isso|isto|não|sim|mais|muito)$/i;
-  /* Palavras curtas ficam coladas à seguinte e a última palavra não fica sozinha na linha (espaço não separável);
-     nada de hifenização: palavra nunca é cortada. O texto guardado e o do editor continuam sem NBSP. */
-  function colarPalavras(texto) {
-    var p = texto.replace(/ /g, ' ').trim().split(/\s+/), n = p.length, saida = '';
-    if (n < 2) return p.join('');
-    for (var i = 0; i < n; i++) {
-      saida += p[i];
-      if (i === n - 1) break;
-      var limpa = p[i].replace(/[^A-Za-zÀ-ÿ0-9-]/g, ''), fim = /[.!?…,;:]$/.test(p[i]);
-      var cola = !fim && (p[i] === '-' || p[i] === '—' || (limpa.length <= 2 || FRACAS.test(limpa)) && p[i].length + p[i + 1].length <= 16);
-      if (i === n - 2 && n >= 3 && p[i].length + p[i + 1].length <= 14) cola = true;      // evita a "viúva" no fim
-      saida += cola ? NBSP : ' ';
+  /* ---------- tradução sobre a página: o PNG de limpeza (texto original apagado) + o texto traduzido em SVG ----------
+     Tudo em pixels da imagem original (viewBox): o encaixe do texto não depende do tamanho da tela. */
+  var NS = 'http://www.w3.org/2000/svg';
+  var FONTE = '"Comic Neue", "Comic Sans MS", system-ui, sans-serif';
+  var canvas = document.createElement('canvas').getContext('2d');
+  var larguras = {};
+  var textos = [];                                                    // { g, fala }: refeitos quando a fonte embutida termina de carregar
+  function medir(texto, tamanho) {                                    // mede em 100 px e escala (a largura é linear no tamanho)
+    var w = larguras[texto];
+    if (w === undefined) { canvas.font = '700 100px ' + FONTE; w = canvas.measureText(texto).width; larguras[texto] = w; }
+    return w * tamanho / 100;
+  }
+  function elSvg(tag, attrs) {
+    var n = document.createElementNS(NS, tag);
+    Object.keys(attrs || {}).forEach(function (k) { n.setAttribute(k, attrs[k]); });
+    return n;
+  }
+  function escrever(g, fala) {
+    g.textContent = '';
+    var c = fala.caixa, texto = fala.maiuscula ? fala.texto.toLocaleUpperCase('pt-BR') : fala.texto;
+    var f = window.LeitorLayout.fitText(medir, texto, c, { fontMax: fala.fonteMax });
+    var t = elSvg('text', { 'class': 'tr', fill: fala.tinta, 'font-size': f.size, 'text-anchor': 'middle', 'dominant-baseline': 'central' });
+    if (fala.contorno) {                                              // letra de sobreposição sobre a arte
+      t.setAttribute('stroke', fala.contorno); t.setAttribute('stroke-width', f.size * 0.2);
+      t.setAttribute('stroke-linejoin', 'round'); t.setAttribute('paint-order', 'stroke');
     }
-    return saida;
+    var lh = f.size * f.lineHeight, topo = c[1] + c[3] / 2 - lh * (f.lines.length - 1) / 2;
+    f.lines.forEach(function (linha, i) { var s = elSvg('tspan', { x: c[0] + c[2] / 2, y: topo + i * lh }); s.textContent = linha; t.appendChild(s); });
+    g.appendChild(t);
   }
-  function escala(fig) { return fig && Number(fig.dataset.w) > 0 ? fig.clientWidth / Number(fig.dataset.w) : 0; }
-  function geometria(el, g) { el.style.left = g[0]; el.style.top = g[1]; el.style.width = g[2]; el.style.height = g[3]; }
-  function cabe(el) { return el.scrollHeight <= el.clientHeight + 1 && el.scrollWidth <= el.clientWidth + 1; }
-  function melhorFonte(el, teto) {
-    var lo = 5, hi = Math.max(8, Math.min(el.clientHeight, teto)), melhor = 0;
-    while (lo <= hi) {
-      var meio = (lo + hi) >> 1; el.style.fontSize = meio + 'px';
-      if (cabe(el)) { melhor = meio; lo = meio + 1; } else { hi = meio - 1; }
-    }
-    return melhor;
-  }
-  function linhas(el) {
-    var t = el.firstChild; if (!t || t.nodeType !== 3) return 0;
-    var r = document.createRange(); r.selectNodeContents(t); return r.getClientRects().length;
-  }
-  /* Equilibra as linhas: o texto ocupa a largura mínima que mantém o mesmo número de linhas (sem recuo gigante num lado). */
-  function equilibrar(el) {
-    el.style.paddingLeft = el.style.paddingRight = '';
-    var n = linhas(el);
-    if (n < 2 || (BALANCEIA && n <= 6)) return;
-    var cheio = el.clientWidth, lo = 0, hi = Math.floor(cheio / 2) - 6, melhor = 0;
-    while (lo <= hi) {
-      var meio = (lo + hi) >> 1; el.style.paddingLeft = el.style.paddingRight = meio + 'px';
-      if (linhas(el) <= n && cabe(el)) { melhor = meio; lo = meio + 1; } else { hi = meio - 1; }
-    }
-    if (melhor > 0) el.style.paddingLeft = el.style.paddingRight = melhor + 'px'; else el.style.paddingLeft = el.style.paddingRight = '';
-  }
-  function ajustar(el) {
-    var fig = el.closest('figure'), fixo = parseFloat(el.dataset.f);
-    var ligado = colarPalavras(el.textContent); if (el.textContent !== ligado) el.textContent = ligado;
-    if (!el.dataset.g0) el.dataset.g0 = JSON.stringify([el.style.left, el.style.top, el.style.width, el.style.height]);
-    var base = JSON.parse(el.dataset.g0); geometria(el, base);          // sempre parte da caixa original (o editor lê esta)
-    el.removeAttribute('data-s'); el.style.paddingLeft = el.style.paddingRight = '';
-    var esc = escala(fig);
-    if (fixo > 0 && esc > 0) { el.style.fontSize = (fixo * esc) + 'px'; equilibrar(el); return; }
-    var ref = parseFloat(el.dataset.r), teto = 64;
-    if (ref > 0 && esc > 0) teto = Math.max(9, Math.min(64, ref * esc * 0.95));       // nunca bem maior que a letra original
-    var f = melhorFonte(el, teto);
-    var edicao = document.body.classList.contains('edicao');
-    if (el.dataset.lv && !edicao && (f === 0 || f < teto * 0.8)) {                  // aperto: usa o espaço livre do balão
-      var lv = JSON.parse(el.dataset.lv), pct = function (v) { return v + '%'; };
-      geometria(el, [pct(lv[0]), pct(lv[1]), pct(lv[2]), pct(lv[3])]);
-      var g = melhorFonte(el, teto);
-      if (g > f + 0.5) f = g; else { geometria(el, base); f = melhorFonte(el, teto); }
-    }
-    if (f === 0) { f = 5; el.setAttribute('data-s', '1'); }                          // nem no mínimo cabe: não corta o texto
-    el.style.fontSize = f + 'px';
-    equilibrar(el);
-  }
-  function ajustarTudo() { document.querySelectorAll('.tr').forEach(ajustar); }
+  function ajustarTudo() { larguras = {}; textos.forEach(function (x) { escrever(x.g, x.fala); }); }
   window.ajustarTudo = ajustarTudo;
-  if ('ResizeObserver' in window) new ResizeObserver(function () { ajustarTudo(); }).observe(principal);
-  window.addEventListener('load', ajustarTudo);
 
   /* ---------- montagem da página a partir dos dados do capítulo ---------- */
   function montar(d) {
     principal.textContent = '';
+    textos = [];
+    var prefixoLimpeza = d.subLimpeza || 'traducao/limpeza/';
     d.imagens.forEach(function (im) {
-      var fig = document.createElement('figure');
+      var fig = document.createElement('figure'), falas = im.falas || [];
       fig.dataset.n = im.n; fig.dataset.arq = im.arq;
-      if (im.medidas && im.blocos.length) {
+      if (im.medidas) {
         fig.className = 'com-medidas'; fig.style.aspectRatio = im.medidas[0] + '/' + im.medidas[1];
         fig.dataset.w = im.medidas[0]; fig.dataset.h = im.medidas[1];
       }
       var img = document.createElement('img');
       img.src = d.base + (d.sub || '') + encodeURIComponent(im.arq); img.alt = 'Imagem ' + im.n + ': ' + im.arq; img.loading = 'lazy'; img.decoding = 'async';
       fig.appendChild(img);
-      im.blocos.forEach(function (b) {
-        var t = document.createElement('div'); t.className = 'tr'; t.dataset.i = b.i; t.title = b.original || '';
-        t.style.left = b.x + '%'; t.style.top = b.y + '%'; t.style.width = b.w + '%'; t.style.height = b.h + '%';
-        t.style.background = b.fundo; t.style.color = b.cor;
-        if (b.fonte > 0) t.dataset.f = b.fonte;
-        if (b.refer > 0) t.dataset.r = b.refer;
-        if (b.livre) t.dataset.lv = JSON.stringify(b.livre);
-        if (b.alerta) t.dataset.a = b.alerta;
-        t.textContent = b.texto; fig.appendChild(t);
-      });
+      if (im.medidas && im.patch) {                                   // texto original apagado, por cima da imagem
+        var limpa = document.createElement('img'); limpa.className = 'patch'; limpa.alt = ''; limpa.decoding = 'async';
+        limpa.src = d.base + prefixoLimpeza + encodeURIComponent(im.patch);
+        fig.appendChild(limpa);
+      }
+      if (im.medidas && falas.length) {
+        var svg = elSvg('svg', { viewBox: '0 0 ' + im.medidas[0] + ' ' + im.medidas[1], 'class': 'tr-svg', 'aria-hidden': 'true' });
+        falas.forEach(function (fala) { var g = elSvg('g', {}); svg.appendChild(g); textos.push({ g: g, fala: fala }); });
+        fig.appendChild(svg);
+      }
       principal.appendChild(fig);
     });
     figuras = [].slice.call(principal.querySelectorAll('figure'));
@@ -120,6 +82,7 @@
     document.title = d.titulo;
     window.BAIXADOR_BASE = d.base;
     ajustarTudo();
+    if (document.fonts && document.fonts.load) document.fonts.load('700 20px "Comic Neue"').then(ajustarTudo, function () {});
   }
 
   /* ---------- progresso lateral: um quadradinho por página; clicar leva à página; mostra o número ---------- */
@@ -252,7 +215,7 @@
     idioma.title = rotulo; idioma.setAttribute('aria-label', rotulo);
   }
   function atualizarIdioma() {
-    var tem = !!principal.querySelector('.tr');
+    var tem = !!principal.querySelector('.tr-svg, .patch');
     if (tem) idioma.removeAttribute('aria-disabled'); else idioma.setAttribute('aria-disabled', 'true');
     aplicarIdioma(tem && lerPreferencia());
     if (!tem) { idioma.title = 'Este capítulo não tem tradução'; idioma.setAttribute('aria-label', idioma.title); }
@@ -312,32 +275,11 @@
     }).catch(function () {});
   }
 
-  /* ---------- refinamento (Hy-MT2) em segundo plano: troca só o TEXTO dos balões que mudaram, sem remontar a página ---------- */
-  function acompanharRefino(d) {
-    var url = api('/api/leitura', 'c=' + encodeURIComponent(relPedido) + (raizId ? '&r=' + encodeURIComponent(raizId) : ''));
-    var tentativas = 0;
-    var timer = setInterval(function () {
-      if (document.hidden) return;
-      if (++tentativas > 1350) { clearInterval(timer); return; }           // ~3 h: desiste (processo encerrado à força)
-      fetch(url, { cache: 'no-store' }).then(function (r) { return r.ok ? r.json() : Promise.reject(); }).then(function (novo) {
-        var mudou = false;
-        novo.imagens.forEach(function (im) {
-          var fig = principal.querySelector('figure[data-arq="' + (window.CSS && CSS.escape ? CSS.escape(im.arq) : im.arq) + '"]');
-          if (!fig) return;
-          im.blocos.forEach(function (b) {
-            var el = fig.querySelector('.tr[data-i="' + b.i + '"]');
-            if (!el || !b.texto) return;                                   // nunca esvazia um balão
-            var atual = el.dataset.t || el.textContent;
-            if (atual !== b.texto && colarPalavras(atual) !== colarPalavras(b.texto)) {
-              el.textContent = b.texto; el.dataset.t = b.texto; if (b.alerta) el.dataset.a = b.alerta; else el.removeAttribute('data-a');
-              ajustar(el); mudou = true;
-            }
-          });
-        });
-        if (!novo.refinando) { clearInterval(timer); if (mudou) ajustarTudo(); }
-      }).catch(function () {});
-    }, 8000);
-    window.__refinoTimer = timer;
+  /* ---------- leitura da biblioteca (verificação): código e dados à parte, carregados só quando o servidor marca admin ---------- */
+  function carregarVerificacao(d) {
+    window.LEITOR = { dados: d, figuras: figuras, api: api, principal: principal };
+    var l = document.createElement('link'); l.rel = 'stylesheet'; l.href = '/estatico/verificacao.css'; document.head.appendChild(l);
+    var sc = document.createElement('script'); sc.src = '/estatico/verificacao.js'; document.body.appendChild(sc);
   }
 
   /* ---------- início ---------- */
@@ -345,13 +287,9 @@
   acesso.then(function (r) { return r.ok ? r.json() : Promise.reject(r.status); }).then(function (d) {
     relCanonico = d.rel;
     montar(d); montarProgresso(); atualizarIdioma(); carregarObra();
-    if (tok && $('editar')) {                                         // edição de tradução: só se o leitor tiver o botão (hoje não tem)
-      var l = document.createElement('link'); l.rel = 'stylesheet'; l.href = '/estatico/edicao.css'; document.head.appendChild(l);
-      var s = document.createElement('script'); s.src = '/estatico/edicao.js'; document.body.appendChild(s);
-    }
+    if (d.admin) carregarVerificacao(d);                             // leitura da BIBLIOTECA: só o notebook manda d.admin e entrega estes arquivos
     document.addEventListener('visibilitychange', function () { if (!document.hidden) carregarObra(); });
     setInterval(function () { if (!document.hidden) carregarObra(); }, 20000);   // capítulos novos: o "172/175" acompanha
-    if (d.refinando) acompanharRefino(d);
   }).catch(function (erro) {
     var p = $('carregando');
     p.textContent = erro === 401 || erro === 403 ? 'Sem acesso. Abra o leitor pelo programa.' : 'Capítulo não encontrado.';

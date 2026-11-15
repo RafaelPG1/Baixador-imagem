@@ -4,7 +4,7 @@ const urlLeitor = (rel) => `/leitor?c=${encodeURIComponent(rel)}&t=${encodeURICo
 const corDe = (o) => String(o.cor);
 const urlCapa = (o) => rota('/api/capa', `&p=${encodeURIComponent(o.pasta)}&v=${o.capa_v}`);
 function urlDaObra(nome) { const p = new URLSearchParams(location.search); if (nome) p.set('obra', nome); else p.delete('obra'); return `${location.pathname}?${p}#biblioteca`; }
-let modoSel = null;                                  // seleção de capítulos para retraduzir/reajustar: {tipo, sel:Set}
+let modoSel = null;                                  // seleção de capítulos para retraduzir/exportar: {tipo, sel:Set}
 function abrirObra(nome) { obraAberta = nome; escolhido = null; modoSel = null; history.pushState(null, '', urlDaObra(nome)); desenhar(); window.scrollTo(0, 0); }
 window.addEventListener('popstate', () => { obraAberta = new URLSearchParams(location.search).get('obra'); escolhido = null; modoSel = null; desenhar(); });
 
@@ -85,17 +85,15 @@ function agrupar(nums) {
   if (ini !== null) r.push(ini === fim ? String(ini) : ini + '–' + fim);
   return r;
 }
-const REFINO_ROT = {fila: 'aguardando refino', refinando: 'refinando', pronto: 'refinado'};
 function estadoDoCapitulo(c) {
   const f = fila[c.rel];
   if (f) {
     if (f.estado === 'traduzindo') return {classe: 'ativo', t: `Traduzindo${f.total ? ' ' + Math.floor((f.feitas || 0) / f.total * 100) + '%' : '…'}`, linha: 'andando'};
     if (f.estado === 'fila') return {classe: 'ativo', t: 'Na fila', linha: 'fila'};
-    if (f.refino === 'refinando') return {classe: 'ativo', t: `Refinando${f.rtotal ? ' ' + Math.floor((f.rfeitas || 0) / f.rtotal * 100) + '%' : '…'}`, linha: 'andando'};
-    if (f.refino === 'fila') return {classe: 'ok', t: 'Traduzido · refino na fila', linha: 'pronto'};
     if (f.estado === 'falhou') return {classe: 'erro', t: 'Falhou', linha: 'pend'};
   }
-  if (c.traduzido && c.incompleta) return {classe: 'aviso', t: `Incompleto · ${c.incompleta} página${c.incompleta === 1 ? '' : 's'} sem tradução`, linha: 'pronto'};
+  if (c.traduzido && c.incompleta) return {classe: 'aviso', t: `Incompleto · ${c.incompleta} fala${c.incompleta === 1 ? '' : 's'} sem tradução`, linha: 'pronto'};
+  if (c.traduzido && c.revisar) return {classe: 'ok', t: `Traduzido · ${c.revisar} a revisar`, linha: 'pronto'};
   return c.traduzido ? {classe: 'ok', t: 'Traduzido', linha: 'pronto'} : {classe: '', t: 'Sem tradução', linha: 'pend'};
 }
 function escolherCapitulo(c) { escolhido = c.rel; ultimoPainel = ''; desenhar(); focarPainel(); }
@@ -116,15 +114,13 @@ function desenharBarraSelecao(o, elegiveis) {
   const n = modoSel.sel.size;
   barra.append(el('span', 'nota num', `${n} de ${elegiveis.length} selecionado${n === 1 ? '' : 's'}`));
   const todos = botao(n === elegiveis.length ? 'Limpar' : 'Selecionar todos', 'pequeno', () => { modoSel.sel = n === elegiveis.length ? new Set() : new Set(elegiveis.map((c) => c.rel)); desenhar(); });
-  const ok = botao(`${re ? 'Retraduzir' : ex ? 'Exportar' : 'Reajustar'} ${n || ''}`.trim(), 'principal pequeno', async () => {
+  const ok = botao(`${re ? 'Retraduzir' : 'Exportar'} ${n || ''}`.trim(), 'principal pequeno', async () => {
     if (!n) return;
     const rels = [...modoSel.sel];
     if (ex) { modoSel = null; baixarExportacao(rels.map((r) => '&rel=' + encodeURIComponent(r)).join('')); desenhar(); return; }
-    if (re && !confirm(`Retraduzir ${n} capítulo(s) de “${o.nome}”?\n\nCada tradução atual só é substituída quando a nova terminar; se a nova falhar ou for cancelada, a atual é restaurada.`)) return;
+    if (!confirm(`Retraduzir ${n} capítulo(s) de “${o.nome}”?\n\nCada tradução atual só é substituída quando a nova terminar; se a nova falhar ou for cancelada, a atual continua valendo.`)) return;
     modoSel = null;
-    if (re) { await traduzir({rels}); desenhar(); return; }
-    const r = await acao('/api/traducao/reajustar', {rels}, (x) => `Reajustado: ${x.trechos} trecho(s) em ${x.imagens} imagem(ns), ${x.conjuntos} capítulo(s).`);
-    if (r) carregar(); else desenhar();
+    await traduzir({rels}); desenhar();
   });
   ok.disabled = !n;
   const cancela = botao('Cancelar', 'pequeno', () => { modoSel = null; desenhar(); });
@@ -180,14 +176,14 @@ function desenharDetalhe() {
   $('pg-biblioteca').classList.toggle('com-painel', !!achado);
   if (!achado) { box.hidden = true; box.replaceChildren(); ultimoPainel = ''; return; }
   const {obra, cap} = achado;
-  const chave = [cap.rel, cap.traduzido, cap.incompleta, cap.imagens, cap.numero, cap.titulo, obra.nome].join('|');
+  const chave = [cap.rel, cap.traduzido, cap.incompleta, cap.revisar, cap.imagens, cap.numero, cap.titulo, obra.nome].join('|');
   if (chave === ultimoPainel && !box.hidden) return;                       // nada mudou: não refaz (não perde o que está sendo digitado)
   ultimoPainel = chave;
   box.hidden = false; box.dataset.cor = corDe(obra);
   const cab = el('div', 'detalhe-cab');
   const t = el('div');
   const h = el('h3', '', `${obra.nome} — ${cap.rotulo}`); h.tabIndex = -1;
-  t.append(h, el('p', 'nota num', `${cap.imagens} imagem(ns) · ${cap.traduzido ? (cap.incompleta ? `incompleto (${cap.incompleta} página${cap.incompleta === 1 ? '' : 's'} sem tradução)` : 'traduzido') : 'sem tradução'}${cap.antigo ? ' · formato antigo (salve para organizar)' : ''}`));
+  t.append(h, el('p', 'nota num', `${cap.imagens} imagem(ns) · ${cap.traduzido ? (cap.incompleta ? `incompleto (${cap.incompleta} fala${cap.incompleta === 1 ? '' : 's'} sem tradução)` : cap.revisar ? `traduzido (${cap.revisar} a revisar)` : 'traduzido') : 'sem tradução'}${cap.antigo ? ' · formato antigo (salve para organizar)' : ''}`));
   const fechar = botao('', 'pequeno bib-icone', fecharDetalhe); fechar.innerHTML = ic('x'); fechar.setAttribute('aria-label', 'Fechar painel do capítulo'); fechar.title = 'Fechar (Esc)';
   cab.append(t, fechar);
 
@@ -195,32 +191,21 @@ function desenharDetalhe() {
   const lerB = comIcone('ler', 'Ler', 'principal'); lerB.addEventListener('click', () => lerCapitulo(cap)); principais.append(lerB);
   const trad = comIcone('traduzir', cap.traduzido ? 'Traduzir de novo' : 'Traduzir', '');
   trad.addEventListener('click', () => {
-    if (cap.traduzido && !confirm(`Traduzir de novo “${cap.rotulo}”? A tradução atual só é substituída quando a nova terminar; se a nova falhar ou for cancelada, a atual é restaurada. Suas correções salvas (glossário e memória) serão reaproveitadas.`)) return;
+    if (cap.traduzido && !confirm(`Traduzir de novo “${cap.rotulo}”? A tradução atual só é substituída quando a nova terminar; se a nova falhar ou for cancelada, a atual continua valendo.`)) return;
     traduzir({rel: cap.rel});
   });
   principais.append(trad);
-  if (cap.traduzido && cap.incompleta) {
-    const comp = comIcone('traduzir', `Completar ${cap.incompleta} página${cap.incompleta === 1 ? '' : 's'} sem tradução`, '');
-    comp.title = 'Traduz só as páginas que ficaram sem tradução, sem mexer nas que já estão prontas';
-    comp.addEventListener('click', () => traduzir({rel: cap.rel, completar: true}));
-    principais.append(comp);
-  }
 
   const gTrad = el('div', 'bib-grupo'); gTrad.append(el('h4', '', 'Tradução'));
   const linhaT = el('div', 'bib-linha-acoes');
   if (cap.traduzido) {
-    const aj = comIcone('ajuste', 'Reajustar caixas e cores', ''); aj.classList.add('largo');
-    aj.addEventListener('click', async () => {
-      const r = await acao('/api/traducao/reajustar', {rel: cap.rel}, (x) => `Reajustado: ${x.trechos} trecho(s) em ${x.imagens} imagem(ns).`);
-      if (r) carregar();
-    });
     const ex = comIcone('lixo', 'Excluir tradução', 'perigo'); ex.classList.add('largo');
     ex.addEventListener('click', async () => {
-      if (!confirm(`Excluir a tradução de “${cap.rotulo}”?\n\nSó o texto traduzido é apagado; as imagens originais ficam. Suas correções salvas (glossário e memória) continuam guardadas. Isto não pode ser desfeito.`)) return;
+      if (!confirm(`Excluir a tradução de “${cap.rotulo}”?\n\nSó a tradução é apagada; as imagens originais ficam. Isto não pode ser desfeito.`)) return;
       const r = await acao('/api/traducao/excluir', {rel: cap.rel}, () => 'Tradução excluída.');
       if (r) carregar();
     });
-    linhaT.append(aj, ex);
+    linhaT.append(ex);
   } else linhaT.append(el('p', 'nota largo', 'Ainda sem tradução. Use “Traduzir” acima.'));
   const exp = comIcone('baixar', 'Exportar para o app do celular', ''); exp.classList.add('largo');
   exp.title = 'Baixa um ZIP deste capítulo (imagens + tradução) para importar no app do celular e ler sem internet';
@@ -307,7 +292,6 @@ function desenharObra(o) {
   if (feitas) {
     const iniciarSel = (tipo) => { escolhido = null; modoSel = {tipo, sel: new Set()}; desenhar(); };
     pn.append(itemMenu('traduzir', 'Retraduzir capítulos…', '', () => iniciarSel('retraduzir')));
-    pn.append(itemMenu('ajuste', 'Reajustar capítulos…', '', () => iniciarSel('reajustar')));
     pn.append(el('hr'));
   }
   if (o.capitulos.length) pn.append(itemMenu('baixar', 'Exportar para o app…', '', () => { escolhido = null; modoSel = {tipo: 'exportar', sel: new Set()}; desenhar(); }));
@@ -371,7 +355,6 @@ async function carregar() {
     if (obraAberta && !bib.obras.some((o) => o.nome === obraAberta)) obraAberta = null;
     if (escolhido && !achar(escolhido)) escolhido = null;
     desenhar(); carregarObras();
-    if (typeof atualizarRefinarBib === 'function' && !tradRodando) atualizarRefinarBib(false);
   } catch (_) {}
 }
 
@@ -382,15 +365,15 @@ async function cancelarCapitulo(rel) {
 }
 async function traduzir(alvo) {
   tradLog = 0; $('log-traducao').textContent = '';
-  const r = await acao('/api/traduzir', {de: $('trad-de').value, para: $('trad-para').value, ...alvo}, (x) => x.conjuntos ? `Traduzindo ${x.conjuntos} capítulo(s)…` : 'Tradução iniciada.');
+  const r = await acao('/api/traduzir', {...alvo}, (x) => x.conjuntos ? `Traduzindo ${x.conjuntos} capítulo(s)…` : 'Tradução iniciada.');
   if (r) { sondarTraducao(); document.dispatchEvent(new CustomEvent('traducao-iniciada')); }
 }
 let andamentoDispensado = '', filaAnterior = '';
 async function sondarTraducao() {
   let e;
   try { e = await ler('/api/traducao/estado', '&log=' + tradLog); } catch (_) { return; }
-  const dep = e.dependencias || {};
-  $('trad-aviso').hidden = !!(dep.ocr && dep.traducao);
+  const dep = e.dependencias || {pronto: true};
+  $('trad-aviso').hidden = !!dep.pronto; $('trad-aviso').textContent = dep.mensagem || '';
   if (e.log && e.log.length) {
     $('log-traducao').textContent += (tradLog ? '\n' : '') + e.log.join('\n');
     $('log-traducao').scrollTop = $('log-traducao').scrollHeight;
@@ -398,14 +381,12 @@ async function sondarTraducao() {
   }
   const rodando = e.estado === 'executando';
   $('trad-pendentes').disabled = rodando;
-  if (rodando !== tradRodando || refinarPend < 0) atualizarRefinarBib(rodando);
 
   // faixa de andamento: só existe enquanto há o que mostrar
-  const refinando = rodando && e.fase === 'refino';
   const aviso_ = (e.avisos || []).join(' ');
   const base = rodando
-    ? (refinando ? `Refinando com o Hy-MT2… ${e.refino_feitas}/${e.refino_total} capítulo(s)` : `Traduzindo… ${e.feitas}/${e.total || '?'}`) + (e.capitulos > 1 ? ` · ${e.prontos}/${e.capitulos} capítulos prontos para ler` : '')
-    : e.estado === 'concluido' ? `Pronto: ${e.resumo.blocos} trecho(s) em ${e.resumo.com_texto} imagem(ns).`
+    ? `Traduzindo… ${e.total ? Math.floor(e.feitas / e.total * 100) : 0}%` + (e.capitulos > 1 ? ` · ${e.prontos}/${e.capitulos} capítulos prontos para ler` : '')
+    : e.estado === 'concluido' ? `Pronto: ${e.resumo.falas} fala(s) em ${e.resumo.capitulos} capítulo(s)` + (e.resumo.revisar ? ` · ${e.resumo.revisar} a revisar` : '') + (e.resumo.erros ? ` · ${e.resumo.erros} com erro` : '') + '.'
     : e.estado === 'erro' ? (e.erro || 'Erro.') : '';
   const texto = [base, aviso_].filter(Boolean).join(' ');
   const chave = `${e.estado}|${e.inicio}|${e.fim}`;
@@ -416,12 +397,11 @@ async function sondarTraducao() {
   $('trad-estado').textContent = texto;
   const chip = $('bib-and-chip');
   chip.className = 'chip ' + (rodando ? 'ativo' : e.estado === 'erro' ? 'erro' : 'ok');
-  chip.textContent = rodando ? (e.cancelando ? 'Cancelando…' : refinando ? 'Refinando' : 'Traduzindo') : e.estado === 'erro' ? 'Erro' : 'Concluído';
-  const emRefino = (e.itens || []).find((i) => i.refino === 'refinando');
-  const frac = refinando ? (e.refino_total ? ((e.refino_feitas || 0) + (emRefino && emRefino.rtotal ? (emRefino.rfeitas || 0) / emRefino.rtotal : 0)) / e.refino_total : 0) : (e.total ? e.feitas / e.total : 0);
+  chip.textContent = rodando ? (e.cancelando ? 'Cancelando…' : 'Traduzindo') : e.estado === 'erro' ? 'Erro' : 'Concluído';
+  const frac = e.total ? e.feitas / e.total : 0;
   $('bib-and-fill').style.width = Math.round((e.estado === 'concluido' ? 1 : Math.min(1, frac)) * 100) + '%';
   $('trad-cancelar').hidden = !rodando; $('trad-cancelar').disabled = !!e.cancelando;
-  $('trad-cancelar').textContent = e.cancelando ? 'Cancelando…' : refinando ? 'Cancelar refinamento' : 'Cancelar tradução';
+  $('trad-cancelar').textContent = e.cancelando ? 'Cancelando…' : 'Cancelar tradução';
   $('bib-and-fechar').hidden = rodando; $('bib-and-fechar').dataset.chave = chave;
   $('bib-tr-btn').classList.toggle('ativo', rodando);
 
@@ -442,32 +422,21 @@ $('bib-log-btn').addEventListener('click', () => {
 });
 $('trad-pendentes').addEventListener('click', () => traduzir({lote: 'pendentes'}));
 
-/* ---- motor de tradução e refinamento (mesmos da aba Traduções) */
+/* ---- motor de tradução (o mesmo da aba Traduções; a escolha é sempre explícita) */
 function desenharMotorBib(cfg) {
   const sel = $('bib-motor');
   if (!sel.options.length) Object.entries(cfg.motores || {}).forEach(([v, r]) => sel.append(new Option(r, v)));
   sel.value = cfg.motor;
-  $('bib-tr-resumo').textContent = ({hibrido: 'Híbrido', argos: 'Argos', hy: 'Hy-MT2 A', hy_pagina: 'Hy-MT2 B', gemini: 'Gemini', openrouter: 'OpenRouter'})[cfg.motor] || '';
+  $('bib-tr-resumo').textContent = ({local: 'TranslateGemma', deepl: 'DeepL', gemini: 'Gemini', mymemory: 'MyMemory'})[cfg.motor] || '';
 }
 document.addEventListener('motor-mudou', (ev) => desenharMotorBib(ev.detail));
 $('bib-motor').addEventListener('change', async () => {
   const v = $('bib-motor').value, st = $('bib-motor-status');
   await Motor.escolher(v);
-  st.textContent = v === 'argos' ? '' : 'Verificando…';
-  if (v !== 'argos') { const h = await Motor.verificar(v); st.textContent = (h.pronto ? '✔ ' : '✖ ') + h.mensagem; }
+  st.textContent = 'Verificando…';
+  const h = await Motor.verificar(v); st.textContent = (h.pronto ? '✔ ' : '✖ ') + h.mensagem;
 });
-let refinarPend = -1;
-async function atualizarRefinarBib(rodando) {
-  const b = $('bib-refinar');
-  try { refinarPend = (await ler('/api/refinar/pendentes')).capitulos; } catch (_) {}
-  b.disabled = rodando || refinarPend <= 0;
-  b.textContent = refinarPend > 0 ? `Refinar ${refinarPend} capítulo${refinarPend > 1 ? 's' : ''} já traduzido${refinarPend > 1 ? 's' : ''}` : 'Refinar capítulos já traduzidos';
-}
-$('bib-refinar').addEventListener('click', async () => {
-  const r = await acao('/api/refinar', {}, (x) => `Refinando ${x.capitulos} capítulo(s) com o Hy-MT2…`);
-  if (r) { sondarTraducao(); document.dispatchEvent(new CustomEvent('traducao-iniciada')); }
-});
-Motor.carregar(); atualizarRefinarBib(false);
+Motor.carregar();
 $('trad-cancelar').addEventListener('click', () => acao('/api/traducao/cancelar'));
 $('excluir-tudo').addEventListener('click', async () => {
   const n = bib.obras.length;

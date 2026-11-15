@@ -62,7 +62,7 @@ window.addEventListener('hashchange', () => irPara(location.hash.slice(1)));
 
 /* Motor de tradução: uma só configuração (guardada no computador), vista na Biblioteca e na aba Traduções. */
 const Motor = (() => {
-  let cfg = {motor: 'hibrido', motores: {}};
+  let cfg = {motor: 'local', motores: {}};
   const mudou = () => document.dispatchEvent(new CustomEvent('motor-mudou', {detail: cfg}));
   async function carregar() { try { cfg = await ler('/api/traducao/config'); mudou(); } catch (_) {} return cfg; }
   async function escolher(valor) {
@@ -77,10 +77,9 @@ const Motor = (() => {
     mudou();
     return cfg;
   }
-  /* Confere o que o motor escolhido precisa (Ollama + modelo; chave do Gemini). Sem rede para o Gemini, nunca trava a tela. */
+  /* Confere o que o motor escolhido precisa (Ollama + modelo; chave do DeepL/Gemini). Quem responde é o próprio sistema de tradução. */
   async function verificar(valor) {
-    if (valor === 'argos') return {pronto: true, mensagem: ''};
-    try { return await chamar(valor === 'gemini' ? '/api/traducao/gemini' : valor === 'openrouter' ? '/api/traducao/openrouter' : '/api/traducao/hy', {}); }
+    try { return await chamar('/api/traducao/verificar', {motor: valor}); }
     catch (e) { return {pronto: false, mensagem: e.message}; }
   }
   return {carregar, escolher, escolherModelo, verificar, get atual() { return cfg; }};

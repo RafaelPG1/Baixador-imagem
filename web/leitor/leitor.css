@@ -11,10 +11,10 @@ figure { margin: 0; position: relative; min-height: 120px; background: transpare
 figure + figure { margin-top: -1px; }          /* sobrepõe 1px: sem fresta entre imagens em telas de densidade fracionária */
 figure img { display: block; width: 100%; height: auto; }
 figure.com-medidas { min-height: 0; }
-.tr { position: absolute; display: flex; align-items: center; justify-content: center; text-align: center; overflow: hidden;
-  border-radius: 3px; line-height: 1.1; font-weight: 700; text-wrap: balance; font-family: "Comic Neue", "Comic Sans MS", "Segoe UI", system-ui, sans-serif;
-  padding: max(1px, .08em) max(2px, .2em); box-sizing: border-box; overflow-wrap: normal; word-break: normal; hyphens: none; }
-.tr[data-s] { overflow: visible; }                    /* nem no tamanho mínimo coube: melhor passar um pouco da caixa do que cortar a frase */
+/* Tradução: o PNG de limpeza cobre o texto original e o SVG escreve a tradução (tudo em pixels da imagem original). */
+figure .patch { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.tr-svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: hidden; }
+.tr-svg .tr { font-family: "Comic Neue", "Comic Sans MS", "Segoe UI", system-ui, sans-serif; font-weight: 700; }
 
 /* ---- controles flutuantes (escondidos até dar dois cliques na leitura) e barra de progresso lateral */
 body { overflow-x: hidden; }                       /* texto que passa da caixa (tamanho mínimo) nunca cria rolagem para os lados */
@@ -27,7 +27,7 @@ figure { -webkit-user-select: none; user-select: none; -webkit-tap-highlight-col
   border-radius: 9px; background: transparent; color: inherit; cursor: pointer; text-decoration: none; font: inherit; }
 .fl a:hover, .fl button:hover { background: rgba(255,255,255,.1); }
 .fl [aria-pressed=true] { background: rgba(90, 162, 255, .28); box-shadow: inset 0 0 0 1px rgba(140, 191, 255, .7); }
-body.original .tr { visibility: hidden; }
+body.original .patch, body.original .tr-svg { visibility: hidden; }
 .fl [aria-disabled=true] { opacity: .35; pointer-events: none; }
 .fl svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
 #coluna { right: max(10px, env(safe-area-inset-right)); top: calc(max(10px, env(safe-area-inset-top)) + 62px); display: flex; flex-direction: column; gap: 2px;

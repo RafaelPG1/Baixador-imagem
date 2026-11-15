@@ -1,7 +1,7 @@
 # Baixador de Imagens
 
 Aplicativo web que roda no seu notebook. Baixa os capítulos de histórias em imagens de sites, guarda numa
-biblioteca organizada por **obra** e **capítulo**, traduz o texto das imagens (offline) e deixa você ler —
+biblioteca organizada por **obra** e **capítulo**, traduz o texto das imagens (inglês para português, no seu computador) e deixa você ler —
 no notebook ou, pelo Wi-Fi de casa, no celular. **O notebook é o servidor**: a biblioteca fica nele e o
 celular só lê, sem cópia própria.
 
@@ -10,8 +10,8 @@ Quatro áreas, na barra de cima:
 | Área | Onde | O que faz |
 |---|---|---|
 | **Baixar imagens** | só notebook | abre o site, procura as imagens, baixa (manual ou automático) |
-| **Biblioteca** | só notebook | vê as obras, lê, traduz, corrige a organização e abre o editor de tradução |
-| **Traduções** | só notebook | escolhe o motor de tradução e acompanha a tradução em andamento: fila de capítulos, progresso (e do refinamento) e registro |
+| **Biblioteca** | só notebook | vê as obras, **lê e confere a tradução (leitura de verificação)**, traduz e corrige a organização |
+| **Traduções** | só notebook | escolhe o motor de tradução e acompanha a tradução em andamento: fila de capítulos, etapa e progresso de cada um, e registro |
 | **Leitura pelo celular** | notebook liga; celular lê | liga o acesso e mostra o QR code; o celular só lê |
 
 ## Requisitos
@@ -19,8 +19,8 @@ Quatro áreas, na barra de cima:
 - Windows 10/11 com **Python 3.9 ou superior** (marque "Add python.exe to PATH" na instalação).
 - Um navegador Chromium para baixar: **Brave**, **Microsoft Edge** ou **Google Chrome**.
 - Dependência principal: `playwright` (não baixa navegador extra se você tiver um dos três).
-- Opcional (tradução): `requirements-traducao.txt` (RapidOCR + Argos Translate; o Argos usa `torch`, então são
-  centenas de MB).
+- Para traduzir: **Node.js 22.9 ou mais novo** (versão LTS, https://nodejs.org) e, para o motor local, o **Ollama** com o
+  modelo `translategemma:4b`. As dependências do tradutor ficam isoladas na pasta `tradutor\` (`npm install` lá dentro).
 
 ## Instalação (PowerShell, dentro da pasta do projeto)
 
@@ -28,8 +28,15 @@ Quatro áreas, na barra de cima:
 py -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
-# opcional, para traduzir:
-python -m pip install -r requirements-traducao.txt
+```
+
+Para traduzir (uma vez):
+
+```powershell
+cd tradutor
+npm install          # instala só dentro de tradutor\node_modules (alguns minutos e algumas centenas de MB)
+cd ..
+ollama pull translategemma:4b     # só para o motor local (3,3 GB)
 ```
 
 Se o PowerShell recusar o `Activate.ps1`:
@@ -58,7 +65,7 @@ funciona no próprio notebook. `Ctrl+C` no PowerShell encerra. Opção `--sem-na
      um erro). Pode ser desligado com o automático rodando: termina o capítulo atual e para.
    - **Traduzir automaticamente após concluir os downloads** (caixa independente): só vale com "Continuar baixando…"
      ligado. A tradução começa uma única vez, quando a sequência termina (não conseguiu avançar para o próximo), com
-     os capítulos baixados nessa execução e os idiomas escolhidos na **Biblioteca**. Não traduz se você cancelar, fechar
+     os capítulos baixados nessa execução e o motor escolhido na **Biblioteca** (ou na aba **Traduções**). Não traduz se você cancelar, fechar
      o navegador, desligar "Continuar" no meio, se um download falhar ou se já houver tradução em andamento. Desligada,
      nada muda.
    - **Atualizar obra: baixar os capítulos mais recentes**: só aparece com as duas caixas acima desligadas (ligada,
@@ -78,7 +85,7 @@ funciona no próprio notebook. `Ctrl+C` no PowerShell encerra. Opção `--sem-na
 
 ## Biblioteca
 
-**Layout (repaginado):** barra fixa no topo com busca, menu **Tradução** (idiomas, motor, Refinar) e menu **⋯** (abrir
+**Layout (repaginado):** barra fixa no topo com busca, menu **Tradução** (motor) e menu **⋯** (abrir
 pasta de saída, excluir tudo). O andamento da tradução aparece numa faixa compacta logo abaixo da barra (com *Registro* e
 *Cancelar*; some quando termina ou ao fechar) e não empurra mais a obra. Na obra, a ficha fica à esquerda e os capítulos
 numa linha do tempo à direita, com o estado de cada um (traduzido, na fila, traduzindo). Clicar num capítulo abre um
@@ -98,7 +105,7 @@ só a **listagem de capítulos** (`Cap. 136`, com o título quando houver e "Tra
 antigo. Números que faltam entre o primeiro e o último aparecem como "Faltam na biblioteca: 174".
 
 - No notebook, clique num capítulo para abrir o painel dele (no celular, o toque abre a leitura):
-  **Ler**, **Traduzir / Traduzir de novo**, **Reajustar caixas e cores** (refaz só o desenho, sem retraduzir),
+  **Ler** (leitura de verificação), **Traduzir / Traduzir de novo**,
   **Abrir pasta** e **organização** (obra, número, nome; **Salvar organização** move a pasta;
   **Renomear a obra inteira** move todos os capítulos, e se o nome já existir as duas se juntam).
 - **Capa da obra**: é o arquivo `capa.jpg` (ou `.png`, `.webp`) dentro da pasta da obra, ao lado dos capítulos
@@ -139,14 +146,14 @@ antigo. Números que faltam entre o primeiro e o último aparecem como "Faltam n
   imagens soltas dentro da pasta da obra) são **movidas** para `Obra\Capítulo`: nunca apaga nem sobrescreve; o que não
   puder ser movido fica onde está (e continua aparecendo) e o programa avisa no terminal.
 - **Dentro de cada capítulo: imagens em `img\`, `.json` na raiz do capítulo.** Ex.: `obras\Obra\Cap 032\img\001.webp` e
-  `obras\Obra\Cap 032\traducao.json` (também `capitulo.json`, `traducao.aviso.json` etc.). Assim dá para pegar só os `.json`
+  `obras\Obra\Cap 032\traducao.json` (também `capitulo.json`). Assim dá para pegar só os `.json`
   sem as imagens. Ao abrir o programa, capítulos antigos com imagens soltas na pasta têm as imagens **movidas** para `img\`
   (só move; nunca apaga nem sobrescreve; se já existir um arquivo igual em `img\`, o solto fica onde está e o programa avisa).
   Os downloads novos já vão direto para `img\`. Para devolver imagens que você colocou à mão na pasta do capítulo, basta
-  reabrir o programa. O `traducao.json` guarda só o nome de cada imagem (`001.webp`), então traduções antigas continuam valendo.
-- Em cima: **Traduzir tudo que falta** (idiomas de/para) e **Abrir pasta da biblioteca**. A biblioteca atualiza
+  reabrir o programa. O `traducao.json` guarda só o nome de cada imagem (`001.webp`); o texto original apagado de cada página fica em `traducao\limpeza\` (PNG transparente por cima da imagem, que nunca é alterada).
+- Em cima: **Traduzir tudo que falta** (com o motor escolhido) e **Abrir pasta da biblioteca**. A biblioteca atualiza
   sozinha em até ~3 s quando chega capítulo novo.
-- **Ler** abre o **leitor global**: uma só página (`/leitor?c=Obra/Capítulo`) que carrega o capítulo escolhido; nada de
+- **Ler** abre o **leitor global** (no notebook, em modo de verificação: veja "Duas leituras" abaixo): uma só página (`/leitor?c=Obra/Capítulo`) que carrega o capítulo escolhido; nada de
   `leitor.html` é gerado por capítulo. Só as imagens, uma embaixo da outra, sem cabeçalho. Controles:
   - **Barra de progresso** colada na esquerda, do topo ao fim da tela: parada é uma risca fina e discreta, **uma faixa por
     página** (as lidas mais claras, a atual em destaque). Tocar ou **arrastar** nela leva à página naquela altura: a barra fica
@@ -157,8 +164,8 @@ antigo. Números que faltam entre o primeiro e o último aparecem como "Faltam n
     (número do capítulo / maior número da obra; sem números nos nomes, usa a posição na lista). Atualiza sozinho quando
     chegam capítulos novos. No fim do capítulo há **‹ Obra** (volta à página da obra) e **Próximo ›** (próximo capítulo disponível; no
     último, aparece "Último capítulo" desativado). Trocar de página não é isso: é só rolar ou usar a barra.
-  - O editor de tradução (corrigir texto, caixas e cores) **não tem botão no leitor atual**; o código continua no projeto
-    (`web/leitor/edicao.js`), inativo, esperando um botão para chamá-lo.
+  - A tradução é desenhada sobre a imagem: o PNG de limpeza cobre o texto original e o texto traduzido é escrito por cima
+    (o botão **idioma** esconde os dois). O editor de tradução antigo foi removido junto com o sistema antigo.
 
 Estrutura no disco:
 
@@ -182,43 +189,79 @@ Se o celular mostrar "Chave inválida ou ausente" depois de **Trocar chave**, es
 (tela apagada, Wi-Fi caindo) não geram mais erros no terminal.
 
 O celular **só lê**: o servidor dele só aceita GET, não tem rota de baixar, traduzir, editar ou reorganizar, e o
-leitor global chega sem o botão de edição. Para acesso **fora de casa**, use o Tailscale (seção abaixo).
+leitor global chega sem nenhuma ferramenta de verificação (veja "Duas leituras"). Para acesso **fora de casa**, use o Tailscale (seção abaixo).
 
-## Tradução (opcional, grátis, offline)
+## Duas leituras
 
-Lê o texto dentro das imagens (OCR) e traduz com Argos; mostra por cima da imagem, sem alterar o original.
-Idiomas de origem: inglês, espanhol, francês, italiano, alemão, português. Japonês, coreano e chinês **não** são lidos.
-**O destino é sempre o português** (fixo no programa; nada o deduz nem o troca). Se um trecho traduzido ainda trouxer
-palavras do espanhol, ele passa por uma segunda tradução es→pt (baixa esse modelo na primeira vez que precisar);
-se a segunda passada não melhorar, o trecho fica como está e é marcado para revisão no leitor.
-Em lote ("Traduzir tudo que falta", "Traduzir N pendentes" ou a tradução automática), **cada capítulo fica liberado
-para leitura assim que termina** (no notebook e no celular), enquanto os demais seguem em segundo plano; o botão
-**Ler** da obra abre o capítulo que você selecionou nela; sem seleção, o último já traduzido.
+O mesmo capítulo pode ser lido de dois jeitos, e eles **não se misturam**:
 
-**Traduzir de novo**: num capítulo já traduzido, o botão pede confirmação e refaz a tradução. A atual continua valendo
-(e legível) até a nova terminar; só então é substituída por inteiro, sem sobras da antiga. Se a nova falhar, for cancelada,
-tiver imagens com erro ou não achar texto, a antiga é mantida. As imagens baixadas nunca são alteradas. As correções que você
-salvou no editor são reaproveitadas.
-Na primeira vez de cada par de idiomas o modelo é baixado (centenas de MB) e depois funciona sem internet. É
-tradução automática: erra gírias, nomes e efeitos sonoros; trate como rascunho e corrija no editor.
-Acabamento do texto: a caixa cobre também pontuação/acentos soltos e o halo do original; o texto não é cortado
-nem tem palavras partidas, as linhas são equilibradas (palavras curtas ficam coladas à seguinte e a última não fica
-sozinha), a letra não passa muito do tamanho da original e, se a frase não cabe, usa o espaço livre do balão.
-Memória: correções suas continuam valendo (também para o mesmo balão lido com pequeno erro de OCR) e, quando a troca
-é de um termo/nome reconhecível, ele é reaplicado em outros balões (`memoria_termos.json`, só quando o termo de origem
-aparece e a forma antiga está no resultado). Nomes do glossário saem sempre com a grafia do glossário.
-Pelo terminal: `python -m baixador --traduzir "obras\Obra\Cap 001" --de en` (destino sempre `pt`).
+| | Leitura da biblioteca (verificação) | Leitura do usuário |
+|---|---|---|
+| Onde | notebook: **Ler** na Biblioteca | celular (navegador), app Android e ZIPs exportados |
+| Mostra | a página traduzida **e** o botão **Verificação**: balões detectados, regiões lidas pelo OCR, texto original e tradução de cada fala, estado (ok / revisar / erro), motor, confiança do OCR, modo de escrita e avisos do processamento | **somente** a página traduzida |
+| Dados | `/api/leitura` com `admin: true` (balões, regiões, originais, status) | `/api/leitura` com `admin: false`: só caixa, cor, fonte e texto traduzido de cada fala |
+| Código | `web/leitor/verificacao.js` e `.css`, carregados só quando o servidor marca `admin` | nunca recebe esses arquivos (o servidor do celular responde 404) |
 
-## Detector de balões (tradução, ligado por padrão)
+Na verificação, passe o mouse numa região para ver a dica, clique para destacar a fala na lista (e vice-versa), e use as opções
+do painel para ligar/desligar balões e regiões ou ver só as falas a revisar ou com erro.
 
-Na primeira tradução o programa baixa **uma vez** um modelo de visão (`detector_int8.onnx`, ~44 MB, Apache-2.0, de `ogkalu/comic-text-and-bubble-detector`) para `dados/modelos/`; depois roda offline. Ele acha os balões da página e é usado para (1) juntar no mesmo texto o que o OCR separou dentro de **um** balão e (2) não deixar a caixa da tradução passar da borda do balão. Páginas altas (webtoon) são fatiadas na vertical.
+## Tradução (sistema do projeto Tradução, local)
 
-É um extra: sem internet, sem o modelo ou se der qualquer erro, a tradução segue pelo método de sempre (cor do fundo). Para desligar, ponha `detector_balao=0` no `.env`. Se não parecer funcionar, o motivo fica em `baixador.traducao.detector.ultimo_erro`; apagar `dados/modelos/detector_int8.onnx` força novo download.
+O Baixador usa o sistema do projeto **Tradução**, escrito em Node.js e guardado na pasta `tradutor\`. O Python só chama o
+Node, um capítulo por vez, e acompanha o andamento; todo o processamento (balões, OCR, tradução, limpeza) é feito pelo Node.
+
+**Idiomas:** por enquanto só **inglês para português (pt-BR)**. Outros idiomas de origem não são lidos.
+
+**O que acontece em cada capítulo** (as imagens em `img\` nunca são alteradas):
+
+1. **Balões** (visão computacional clássica) e **regiões de texto** (modelo de detecção PP-OCRv4, local) são achados e juntados.
+2. **OCR por região** (Tesseract): cada balão é lido separadamente; balões cortados entre uma página e a seguinte (webtoon) são
+   pareados e lidos, traduzidos e limpos como um só.
+3. **Tradução em lotes de falas** com contexto das falas anteriores, validação do resultado e cache por lote.
+4. **Limpeza**: só os pixels do texto original são apagados (na cor real do fundo), num PNG transparente por página.
+5. O resultado vai para `traducao.json` e `traducao\limpeza\*.png`, dentro do próprio capítulo; o leitor escreve a tradução por cima.
+
+**Motores** (a escolha é sempre explícita, fica em `dados\traducao.json` e **nada troca de motor sozinho**; se o escolhido
+falhar, o erro aparece com o nome dele):
+
+- **TranslateGemma via Ollama (padrão, local, grátis):** `ollama pull translategemma:4b` (o 12B também aparece na lista, mais
+  pesado). Se o Ollama estiver parado ou o modelo faltar, a tradução nem começa e a mensagem diz o que fazer.
+- **DeepL** (nuvem): `DEEPL_API_KEY` no `.env`.
+- **Gemini** (nuvem): `GEMINI_API_KEY` no `.env` (e, se quiser, `GEMINI_MODEL`).
+- **MyMemory** (nuvem, grátis): tradução literal, qualidade básica; `MYMEMORY_EMAIL` no `.env` aumenta o limite diário.
+- Os motores de nuvem recebem **só o texto** extraído, nunca a imagem. O `.env` fica só no notebook e **não deve ser
+  compartilhado nem enviado a um repositório**. O botão **Verificar o motor escolhido** (aba Traduções) confere o que falta.
+  (`OLLAMA_URL` no `.env` muda o endereço do Ollama, se ele não estiver no computador padrão.)
+
+Em lote ("Traduzir tudo que falta", a seleção de capítulos ou a tradução automática), **cada capítulo fica liberado para
+leitura assim que termina** (no notebook e no celular), enquanto os demais seguem em segundo plano.
+
+**Traduzir de novo e cancelar:** enquanto um capítulo é traduzido o trabalho fica em `traducao.nova\`. Se for cancelado, falhar
+ou o programa fechar, traduzir o mesmo capítulo de novo **continua de onde parou** (etapas prontas são puladas e os lotes já
+traduzidos vêm do cache). A tradução antiga continua valendo, e legível, até a nova terminar; só então é substituída por inteiro.
+**Cancelar tradução** encerra o Node na hora; **Cancelar** num capítulo da fila tira só ele.
+**Retraduzir capítulos escolhidos:** na página da obra, **Mais ações → Retraduzir capítulos…** abre uma seleção na lista (só os
+traduzidos podem ser marcados). **Excluir tradução** (no capítulo ou na obra) apaga `traducao.json`, `traducao\` e restos de uma
+execução interrompida; as imagens originais ficam. Isto não pode ser desfeito.
+
+**Glossário e correções (opcionais):** `obras\<Obra>\glossario.json` com `{ "TERMO": "tradução" }` (o tradutor avisa quando
+um termo não aparece na tradução; não força a troca) e `obras\<Obra>\<Capítulo>\correcoes.json` com `{ "p001-b3": "texto certo" }`
+(corrige o OCR de uma fala, pelo id que aparece na verificação). Arquivo fora desse formato é ignorado, com aviso no registro.
+
+**Arquivos do sistema antigo:** ao abrir o programa, o `traducao.json` antigo, `traducao.parcial.json`, `traducao.anterior.json`,
+`traducao.aviso.json`, as memórias (`memoria_*.json`) e os glossários no formato antigo são apagados das obras (o
+`traducao.json` novo e glossários no formato novo nunca são tocados). Os capítulos precisam ser traduzidos de novo.
+
+**Falas que o tradutor não reescreve** (efeitos sonoros, texto fora de balão e as que falharam) continuam originais na imagem e
+aparecem na verificação como "não reescrita". Tradução automática erra gírias e nomes: use a verificação para conferir.
+
+Pelo terminal: `python -m baixador --traduzir "obras\Obra\Cap 001"` (motor da aba Traduções). O que o Node faz sozinho,
+sem o Baixador: veja `tradutor\LEIA-ME.md`.
 
 ## Outros comandos
 
 - `python -m baixador --sem-navegador`: não abre a janela sozinha.
-- `python -m baixador --traduzir PASTA --de en`: traduz uma pasta de imagens pelo terminal.
+- `python -m baixador --traduzir PASTA`: traduz um capítulo pelo terminal (inglês para português, motor da aba Traduções).
 - `python -m baixador --apagar-perfil`: apaga o perfil próprio do navegador (extensões e logins).
 
 ## Segurança e privacidade
@@ -227,16 +270,17 @@ Na primeira tradução o programa baixa **uma vez** um modelo de visão (`detect
   JSON de até 16 KB, CSP restritiva. Páginas de sites são sempre exibidas como texto.
 - Servidor do celular: só liga quando você manda; só GET; chave longa e aleatória (vira cookie e sai da URL); só aceita
   clientes de endereços de rede local; confere Host; bloqueia por 1 min após 8 chaves erradas; entrega só as páginas do programa
-  (leitor e telas), os dados do capítulo pedido e imagens de dentro de `obras\` (nunca `traducao.json`, `capitulo.json`,
+  (leitor e telas), os dados do capítulo pedido (sem dados de verificação) e imagens de dentro de `obras\` (nunca `traducao.json`, `capitulo.json`,
   nem caminhos fora da pasta).
-- Nada é enviado à nuvem. A única conexão externa é o download dos modelos de tradução, uma vez por par de idiomas.
+- Com o motor local (padrão) nada é enviado à nuvem. DeepL, Gemini e MyMemory, se você os escolher, recebem só o texto das falas, nunca a imagem. O Ollama e o `npm install` baixam o que precisam uma vez.
 - A chave do celular fica em `dados\celular.json` (uma `celular.json` antiga na raiz do projeto é movida para lá sozinha) (não compartilhe esse arquivo).
 
 ## Limitações
 
 - A biblioteca mostra a pasta `obras\`. Capítulos baixados para outra pasta não aparecem nela.
 - Sites com proteção forte (login, captcha, DRM) podem exigir que você prepare a página manualmente.
-- OCR e tradução automáticos erram; revise.
+- OCR e tradução automáticos erram; revise com a leitura de verificação.
+- Só inglês para português por enquanto.
 - A atualização do celular é por consulta a cada ~3 s (não é push): o celular precisa estar com a tela ligada.
 
 ## Estrutura do projeto
@@ -255,66 +299,40 @@ baixador-imagens\
 │   │   ├── obra.py            # obra.json: nome e endereço principal da obra
 │   │   ├── estrutura.py       # leva pastas antigas para Obra\Capítulo (só move)
 │   │   ├── capa.py            # capa da obra (capa.jpg) e como achá-la na página da obra do site
-│   │   ├── capitulo.py        # dados de um capítulo para o leitor (imagens e trechos traduzidos)
+│   │   ├── capitulo.py        # dados de um capítulo para o leitor (leitura do usuário e de verificação)
 │   │   └── organizacao.py     # identifica obra/número/nome (aba do site e endereço)
 │   ├── navegador\
 │   │   ├── manual.py          # abrir, procurar (B/C), baixar, automático, próximo
 │   │   ├── captura.py         # abre o navegador (Playwright) com perfil e bloqueios
 │   │   └── navegadores.py     # acha Brave/Edge/Chrome e gerencia perfis
 │   ├── traducao\
-│   │   ├── pipeline.py        # OCR + tradução + gravação segura do traducao.json
-│   │   ├── inteligencia.py    # contexto, glossário, memória e alertas
-│   │   └── edicao.py          # edição de blocos traduzidos (API do editor)
-│   └── nucleo\                # imagens.py, sequencia.py, seguranca.py, erros.py
+│   │   ├── executor.py        # chama o tradutor Node (um capítulo por vez), progresso, cancelar
+│   │   ├── config.py          # motor e modelo escolhidos (dados\traducao.json)
+│   │   └── legado.py          # remove arquivos do sistema de tradução antigo
+│   └── nucleo\                # imagens.py, sequencia.py, seguranca.py, erros.py, ambiente.py (.env)
+├── tradutor\                 # sistema de tradução do projeto Tradução (Node.js); node_modules fica aqui dentro
+│   ├── src\                   # processar-capitulo.js (entrada), vision\ (balões, OCR, limpeza), services\ (motores)
+│   └── test\                  # testes do tradutor (npm test)
 ├── web\                       # interface (HTML/CSS/JS), servida pelos servidores
 │   ├── notebook\              # app.html, baixar.js, biblioteca.js, celular.js, comum.js
 │   ├── celular\               # leitura.html, leitura.js (tela do celular)
-│   ├── leitor\                # leitor.html, leitor.css, leitor.js (+ edicao.js/css, inativo)
+│   ├── leitor\                # leitor.html, .css, .js, layout.js (leitura do usuário) + verificacao.js/.css (só notebook)
 │   └── compartilhado\         # base.css, diagrama.js, qrcode.js
 ├── docs\                      # PRODUCT.md, DESIGN.md
 ├── dados\                     # criada ao usar: celular.json (chave do celular)
 ├── obras\                     # criada ao usar: a biblioteca
-├── requirements.txt, requirements-traducao.txt
+├── tests\                    # testes do Python (python -m unittest discover -s tests)
+├── requirements.txt
 └── LEIA-ME.md
 ```
 
 `web\compartilhado\qrcode.js` é a biblioteca `qrcode-generator` (Kazuhiko Arase, licença MIT), incluída localmente.
-Os testes automáticos não fazem parte da entrega.
+Testes: `python -m unittest discover -s tests -v` (Python; os de integração usam o Node e um Ollama de mentira) e `cd tradutor; npm test` (Node).
 
 
 ## Pasta da biblioteca
 
 A biblioteca fica em `obras\` (antes `saida\`). Se ao abrir só existir `saida\`, o programa a renomeia sozinho para `obras\`, sem copiar nem apagar nada. Se existirem as duas, ele usa só `obras\` e avisa no console.
-
-## Motor de tradução (aba Traduções)
-
-- **Híbrido (recomendado)**: o Argos traduz rápido e o capítulo já pode ser lido; em segundo plano o **Hy-MT2-7B** (via Ollama) refina balão a balão (português do Brasil mais natural). O leitor aberto troca os textos sozinho, sem mexer na posição de leitura.
-- **Somente Argos**: como antes (rápido; sai mais português de Portugal).
-- **Somente Hy-MT2 — Modo A (balão por balão)**: tudo pelo Hy-MT2, uma fala por chamada (lento: ~10 s por fala em CPU).
-- **Somente Hy-MT2 — Modo B (página inteira com contexto)**: os balões da página vão numerados, em ordem de leitura, numa única chamada. Se a lista volta com quantidade/numeração diferente, todos os balões da página são refeitos um a um (Modo A); se só um item vem vazio ou inválido, só ele é refeito. Texto e balão nunca se desalinham.
-- **Gemini**: mesma lógica do Modo B, na nuvem. Envia **só o texto** extraído, nunca a imagem. A chave fica no arquivo `.env` da raiz do projeto (`key_gemini = "sua-chave"`); ela não vai para código, log nem mensagem de erro, e **o `.env` não deve ser compartilhado nem enviado a um repositório**. O modelo é a constante `MODELO_GEMINI` em `baixador/traducao/gemini.py`; se a chave não enxerga esse modelo (erro 404), o programa consulta a lista de modelos da própria chave e passa sozinho para um Flash disponível. Cada página vai em JSON estruturado, com as falas anteriores como contexto. Chave vazia, recusada, limite de uso ou internet fora aparecem como aviso claro, sem travar o programa.
-
-- **OpenRouter**: mesma lógica do Gemini (página inteira em JSON estruturado, só texto, nunca a imagem), com a API compatível com OpenAI. No `.env` acrescente `key_openrouter = "sua-chave"` e, se quiser trocar o modelo, `modelo_openrouter = "fornecedor/modelo"` (ids em openrouter.ai/models; o padrão é `nvidia/nemotron-3.5-super-vl:free`, constante `MODELO_OPENROUTER` em `baixador/traducao/openrouter.py`). **Só modelos `:free` são aceitos** (o programa recusa qualquer outro, para nunca gastar créditos) e cada pedido leva um teto de tokens de saída. Atenção: modelos `:free` têm limite de 20 pedidos/min e **50/dia** (1000/dia com pelo menos US$ 10 de créditos comprados) e o programa faz **1 pedido por página**, então um capítulo longo não cabe no limite diário gratuito sem créditos. Erro 401 = chave recusada; 402 = sem saldo; 404/400 = modelo inexistente; 429 = limite (a página é adiada e tentada de novo).
-- O tempo de cada página/motor aparece no console (`[tempo] …`) para comparar os modos.
-- **Refinar capítulos já traduzidos** (botão na aba Traduções): passa o Hy-MT2 pelos capítulos que já têm tradução do Argos e ainda não foram refinados; mostra quantos são. Pode ser cancelado a qualquer momento.
-- A escolha vale para as próximas traduções; uma já em andamento termina com o motor com que começou. Fica salva em `dados/traducao.json`.
-- O Hy-MT2 nunca é baixado pelo programa. Uma vez, no terminal: `ollama pull hf.co/tencent/Hy-MT2-7B-GGUF:Q4_K_M` (o botão **Verificar Ollama e Hy-MT2** mostra o que falta). Sem Ollama/modelo, o Híbrido avisa e entrega só o Argos; o "Somente Hy-MT2" mostra o erro e não traduz.
-- O refinamento só troca um texto por outro válido (não vazio, não copiado do original, em português). Se você editou o balão enquanto o Hy trabalhava, ou ele veio da memória de correções, o seu texto vence. Cancelar interrompe na hora (inclusive no meio de uma fala) e mantém a tradução do Argos. O texto original, a posição e o tamanho dos balões nunca mudam.
-- Antes do tradutor, o texto lido pelo OCR é corrigido (palavras coladas, hifenização) e frases que continuam entre balões são traduzidas juntas e repartidas de volta, sem inventar palavras.
-
-## Traduzir de novo e excluir traduções
-
-- **Traduzir de novo** guarda a tradução antiga como backup até a nova terminar. Se a nova falhar ou for cancelada, a antiga é **restaurada** automaticamente. Glossário e memória de correções são mantidos.
-- **Retomada por página:** o progresso de cada página é salvo em `traducao.parcial.json`. Se a tradução for cancelada, falhar ou o programa fechar, traduzir o mesmo capítulo de novo (mesmo motor e idiomas) continua da página em que parou, sem refazer as prontas.
-- **Efeitos sonoros não são traduzidos** (VROOM, TAP, FLASH, AHH...). O programa trata como efeito um texto de **até 2 palavras e 16 letras, maior que as letras das falas e escrito direto sobre a arte** (sem balão nem caixa lisa atrás). Fala em balão, legenda lisa e frases de 3+ palavras são sempre traduzidas; na dúvida, traduz. Se algum efeito escapar (ou uma fala for pulada), selecione a área no modo edição: a área escolhida pelo usuário é sempre traduzida.
-- **Caixas que não se sobrepõem:** quando dois balões estão colados, a letra de um não é mais puxada para a caixa do outro, e, se duas caixas ainda se cruzarem, o corte passa no meio do vão entre os textos originais. Releituras repetidas da mesma linha (lixo do OCR, ex. "I7....") são descartadas.
-- **Capítulo incompleto:** se alguma página ficar sem tradução (Gemini instável, por exemplo), o capítulo aparece como *Incompleto · N páginas sem tradução* na Biblioteca (e no celular), e o painel ganha o botão **Completar N páginas sem tradução**, que traduz só essas páginas.
-- **Excluir tradução** (Biblioteca, no capítulo ou na obra): apaga o `traducao.json` e os arquivos auxiliares (`traducao.parcial.json`, `traducao.anterior.json`, `traducao.aviso.json`); as imagens originais e as correções salvas ficam.
-- A Biblioteca também tem o seletor de motor e o botão **Refinar**, iguais aos da aba Traduções (a configuração é a mesma).
-- **Glossário único por obra:** os nomes detectados automaticamente vão para `obras/<Obra>/glossario.json`, um só para todos os capítulos (só acrescenta; `manter` e `termos` escritos à mão são preservados). Os `glossario.json` antigos dentro de cada capítulo são incorporados ao da obra na próxima tradução, e o arquivo do capítulo é removido se estiver só com nomes automáticos.
-- **Reajustar caixas e cores** agora também aplica a correção de sobreposição entre balões, sem ler nem traduzir de novo. O que depende do OCR (efeitos sonoros e linhas duplicadas) só muda com uma nova tradução.
-- **Retraduzir / Reajustar capítulos escolhidos:** na página da obra, **Mais ações → Retraduzir capítulos…** ou **Reajustar capítulos…** abre uma seleção na lista de capítulos (só os traduzidos podem ser marcados; há **Selecionar todos** e **Cancelar**). Retraduzir mantém a tradução antiga até a nova terminar (e a restaura se falhar); Reajustar refaz só caixas e cores, sem OCR nem tradução.
-- **Migração dos glossários antigos:** ao iniciar, o programa leva o `glossario.json` de cada capítulo para o glossário único da obra (`obras/<Obra>/glossario.json`), juntando nomes automáticos, `manter` e `termos` (em conflito de termo, vale o que já estava na obra) e só apagando o arquivo do capítulo depois de confirmar que o da obra foi gravado.
 
 ## App Android (acesso de qualquer lugar pelo Tailscale)
 
@@ -341,14 +359,14 @@ O app é um APK próprio (Capacitor), instalado como qualquer aplicativo, sem de
 - **Notebook (online):** lista as obras do notebook com capa. Dentro da obra, **toque no capítulo para ler na hora, direto do notebook, sem baixar** (se o capítulo já estiver baixado, o app usa a cópia do celular). Para baixar, marque capítulos (**Todos**, **Não baixados**, **Limpar**) e escolha **Baixar para ler offline** (guarda no app) ou **Salvar ZIP no celular** (um ZIP por capítulo em `Download/Baixador/<Obra>/`, que o app também importa depois em **Ajustes → Importar ZIP**).
 - **Baixadas:** lê sem internet e sem o notebook; excluir capítulo/obra libera espaço. O leitor (web e app) traz a fonte **Comic Neue Bold** embutida (licença OFL, em `web/compartilhado/fontes/`), então o texto fica igual em qualquer aparelho, mesmo sem internet.
 
-O app usa **o mesmo leitor da web** (copiado de `web/leitor/` na hora de compilar): barra de progresso lateral, botões flutuantes com dois cliques/toques, lista de capítulos, alternar original/tradução e capítulo anterior/próximo; o app ainda volta de onde você parou.
+O app usa **o mesmo leitor da web** (leitura do usuário, copiada de `web/leitor/` na hora de compilar; a verificação não vai): barra de progresso lateral, botões flutuantes com dois cliques/toques, lista de capítulos, alternar original/tradução e capítulo anterior/próximo; o app ainda volta de onde você parou.
 - **Fora de casa:** deixe o **Tailscale ligado no celular** e o notebook **ligado, conectado e sem suspender** (Configurações de energia do Windows). O Android reserva o espaço de VPN para o Tailscale (não dá para usar outra VPN ao mesmo tempo).
 
-**Segurança:** só aparelhos da sua conta Tailscale chegam ao servidor, e ainda é preciso a chave do QR (que **Trocar chave** invalida). O servidor só lê a biblioteca; não escreve, apaga ou traduz nada. Chaves de IA (Gemini/OpenRouter) ficam só no `.env` do notebook e nunca vão ao celular.
+**Segurança:** só aparelhos da sua conta Tailscale chegam ao servidor, e ainda é preciso a chave do QR (que **Trocar chave** invalida). O servidor só lê a biblioteca; não escreve, apaga ou traduz nada. Chaves de API (DeepL/Gemini) ficam só no `.env` do notebook e nunca vão ao celular. O celular e o app recebem só a leitura do usuário (a tradução pronta), nunca os dados de verificação.
 
 **Atualizar o app pelo próprio app:** compile uma versão nova no GitHub (**Actions → Compilar APK**), depois abra o app em **Ajustes → Atualização do app → Procurar atualização** e toque em **Baixar e instalar**. Quem busca o APK no GitHub é o **notebook** (guarda em `dados/apk/` e entrega ao celular pelo Tailscale), então o celular não precisa de acesso ao GitHub. O Android sempre pede a sua confirmação (**Atualizar**) e só aceita o APK com a **mesma assinatura**: por isso o segredo `KEYSTORE_BASE64` (passo 2 acima) é obrigatório para atualizar por cima. Na primeira vez o Android pede para liberar "Instalar apps desconhecidos" para o Baixador Leitor. O repositório vem do `.git/config` da pasta do projeto; se preferir, ponha `github_repo=dono/repositório` no `.env`. Se o repositório for **privado**, ponha também `github_token=…` (token com leitura de conteúdo do repositório) no `.env`; ele fica só no notebook.
 
-**Limites conhecidos:** em redes de operadora com CGNAT o Tailscale usa um relé e o download pode ser mais lento; o leitor do app não tem o modo de edição do notebook; se o seu celular usa **DNS privado** (Configurações → Rede → DNS privado), deixe em Automático ou desligado, senão o app não resolve o endereço `.ts.net`; testei o servidor e o app em navegador com HTTPS local, mas o APK em si só pode ser validado no seu celular.
+**Limites conhecidos:** em redes de operadora com CGNAT o Tailscale usa um relé e o download pode ser mais lento; o app só tem a leitura do usuário (sem a verificação do notebook); depois da troca do sistema de tradução o **APK precisa ser recompilado** (o leitor mudou) e os capítulos baixados no app antes disso devem ser exportados de novo; se o seu celular usa **DNS privado** (Configurações → Rede → DNS privado), deixe em Automático ou desligado, senão o app não resolve o endereço `.ts.net`; testei o servidor e o app em navegador com HTTPS local, mas o APK em si só pode ser validado no seu celular.
 
 ## Publicar no GitHub (PowerShell, na pasta do projeto)
 
@@ -363,5 +381,5 @@ git remote add origin https://github.com/SEU-USUARIO/baixador-imagens.git
 git push -u origin main
 ```
 - O repositório pode ser **privado**: o fluxo funciona igual e você baixa o APK na página Releases já logado no GitHub (no celular, entre no GitHub pelo navegador antes). Em repositório público qualquer pessoa com o link baixaria o APK (ele não contém chaves, só o app).
-- Se você **já commitou** o `.env` ou `obras/` alguma vez, o `.gitignore` não os remove do histórico: rode `git rm -r --cached .env obras dados` e, se já deu push, **gere novas chaves** (Gemini/OpenRouter).
+- Se você **já commitou** o `.env` ou `obras/` alguma vez, o `.gitignore` não os remove do histórico: rode `git rm -r --cached .env obras dados` e, se já deu push, **gere novas chaves** (DeepL/Gemini).
 - O projeto não usa GitHub Pages nem PWA em nenhuma parte. O GitHub serve apenas para guardar o código e, pelo Actions, compilar o APK (publicado em Releases).
