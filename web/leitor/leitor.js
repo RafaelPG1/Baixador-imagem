@@ -21,7 +21,7 @@
   var FONTE = '"Comic Neue", "Comic Sans MS", system-ui, sans-serif';
   var canvas = document.createElement('canvas').getContext('2d');
   var larguras = {};
-  var textos = [];                                                    // { g, fala }: refeitos quando a fonte embutida termina de carregar
+  var textos = [];                                                    // { g, fala, medidas }: refeitos quando a fonte embutida termina de carregar
   function medir(texto, tamanho) {                                    // mede em 100 px e escala (a largura é linear no tamanho)
     var w = larguras[texto];
     if (w === undefined) { canvas.font = '700 100px ' + FONTE; w = canvas.measureText(texto).width; larguras[texto] = w; }
@@ -32,20 +32,23 @@
     Object.keys(attrs || {}).forEach(function (k) { n.setAttribute(k, attrs[k]); });
     return n;
   }
-  function escrever(g, fala) {
+  function escrever(g, fala, medidas) {
     g.textContent = '';
-    var c = fala.caixa, texto = fala.maiuscula ? fala.texto.toLocaleUpperCase('pt-BR') : fala.texto;
-    var f = window.LeitorLayout.fitText(medir, texto, c, { fontMax: fala.fonteMax });
+    var texto = fala.maiuscula ? fala.texto.toLocaleUpperCase('pt-BR') : fala.texto;
+    // o texto pode vazar do balão: se não coubesse sem encolher demais, a caixa cresce antes de a letra diminuir
+    var f = window.LeitorLayout.fitFlexible(medir, texto, fala.caixa, { fontMax: fala.fonteMax, limites: medidas });
+    var c = f.caixa;
     var t = elSvg('text', { 'class': 'tr', fill: fala.tinta, 'font-size': f.size, 'text-anchor': 'middle', 'dominant-baseline': 'central' });
-    if (fala.contorno) {                                              // letra de sobreposição sobre a arte
-      t.setAttribute('stroke', fala.contorno); t.setAttribute('stroke-width', f.size * 0.2);
+    var halo = fala.contorno || fala.fundo;                           // contorno (letra sobre a arte) ou halo na cor do balão, que mantém legível o que passa do balão
+    if (halo) {
+      t.setAttribute('stroke', halo); t.setAttribute('stroke-width', f.size * (fala.contorno ? 0.2 : 0.16));
       t.setAttribute('stroke-linejoin', 'round'); t.setAttribute('paint-order', 'stroke');
     }
     var lh = f.size * f.lineHeight, topo = c[1] + c[3] / 2 - lh * (f.lines.length - 1) / 2;
     f.lines.forEach(function (linha, i) { var s = elSvg('tspan', { x: c[0] + c[2] / 2, y: topo + i * lh }); s.textContent = linha; t.appendChild(s); });
     g.appendChild(t);
   }
-  function ajustarTudo() { larguras = {}; textos.forEach(function (x) { escrever(x.g, x.fala); }); }
+  function ajustarTudo() { larguras = {}; textos.forEach(function (x) { escrever(x.g, x.fala, x.medidas); }); }
   window.ajustarTudo = ajustarTudo;
 
   /* ---------- montagem da página a partir dos dados do capítulo ---------- */
@@ -70,7 +73,7 @@
       }
       if (im.medidas && falas.length) {
         var svg = elSvg('svg', { viewBox: '0 0 ' + im.medidas[0] + ' ' + im.medidas[1], 'class': 'tr-svg', 'aria-hidden': 'true' });
-        falas.forEach(function (fala) { var g = elSvg('g', {}); svg.appendChild(g); textos.push({ g: g, fala: fala }); });
+        falas.forEach(function (fala) { var g = elSvg('g', {}); svg.appendChild(g); textos.push({ g: g, fala: fala, medidas: im.medidas }); });
         fig.appendChild(svg);
       }
       principal.appendChild(fig);

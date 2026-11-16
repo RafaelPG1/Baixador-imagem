@@ -5,7 +5,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { progresso } from '../progresso.js';
 import sharp from 'sharp';
-import { cleanFree } from './clean-free.js';
+import { cleanFree, cleanForce } from './clean-free.js';
 import { isWord } from '../ocr/lexicon.js';
 
 const median = (a) => { const s = Float64Array.from(a).sort(); return s.length ? s[s.length >> 1] : 0; };
@@ -223,7 +223,7 @@ export async function cleanChapter({ results3, ocrFile, translationFile, outDir,
   const trByFile = new Map();
   for (const u of translation.units) trByFile.set(u.file, [...(trByFile.get(u.file) ?? []), u]);
   await mkdir(path.join(outDir, 'limpeza'), { recursive: true });
-  const stats = { units: 0, cleaned: 0, joined: 0, tooltip: 0, flagged: 0 };
+  const stats = { units: 0, cleaned: 0, joined: 0, tooltip: 0, flagged: 0, forced: 0 };
 
   const loaded = new Map(); // só as últimas páginas ficam na memória
   const load = async (page) => {
@@ -251,6 +251,16 @@ export async function cleanChapter({ results3, ocrFile, translationFile, outDir,
       const tooltip = (reason) => { stats.tooltip++; out.units.push({ id: t.id, mode: 'tooltip', flag, reason }); };
       if (t.status === 'copiado') { out.units.push({ id: t.id, mode: 'nenhum', flag }); continue; }
       if (t.status === 'erro' || !t.translation) { tooltip('erro'); continue; }
+      // Toda fala com tradução aparece na imagem. Se a limpeza "bonita" não se aplica (balão cortado sem par, texto fora de
+      // balão, balão sem tinta achada...), escreve mesmo assim sobre a região lida (cleanForce); o leitor deixa o texto vazar.
+      const force = async (reason) => {
+        const A = await load(page);
+        const patch = A && (patches.get(page.file) ?? patches.set(page.file, new Uint8Array(A.W * A.H * 4)).get(page.file));
+        const c = A && o?.bbox && cleanForce({ rgb: A.rgb, W: A.W, H: A.H, bbox: o.bbox, patch, lineHint: String(o.text ?? '').split('\n').filter(Boolean).length || 1 });
+        if (!c || c.empty) return tooltip(reason);
+        stats.cleaned++; stats.forced++;
+        out.units.push({ id: t.id, mode: 'texto', flag, join: null, reason, box: c.box, bg: c.bg, ink: c.ink, stroke: c.stroke, fontMax: c.fontMax, lines: c.lines, upper: upperRatio(t.source) >= 0.8 });
+      };
       if (o?.kind === 'free_text' && o.balloonId == null && legivel(o.text) && ['ok', 'revisar'].includes(o.status)) {
         // texto solto lido com confiança: escreve no lugar dele (fundo liso) ou sobre a arte (só texto de sobreposição)
         const A = await load(page);
@@ -261,12 +271,12 @@ export async function cleanChapter({ results3, ocrFile, translationFile, outDir,
           out.units.push({ id: t.id, mode: 'texto', flag, join: null, box: c.box, bg: c.bg, ink: c.ink, stroke: c.stroke, fontMax: c.fontMax, lines: c.lines, upper: upperRatio(t.source) >= 0.8 });
           continue;
         }
-        tooltip(c?.reason ?? 'fora-de-balao'); continue;
+        await force(c?.reason ?? 'fora-de-balao'); continue;
       }
-      if (!o || !['balloon', 'narration'].includes(o.kind) || o.balloonId == null) { tooltip('fora-de-balao'); continue; }
+      if (!o || !['balloon', 'narration'].includes(o.kind) || o.balloonId == null) { await force('fora-de-balao'); continue; }
       const balloon = page.balloons.find((b) => b.id === o.balloonId);
       const A = await load(page);
-      if (!balloon || !A) { tooltip('sem-balao'); continue; }
+      if (!balloon || !A) { await force('sem-balao'); continue; }
       let c, join = null;
       if (o.joinedWith) {
         // balão cortado: a outra metade tem de ser o balão da página seguinte, com a mesma largura
@@ -274,14 +284,14 @@ export async function cleanChapter({ results3, ocrFile, translationFile, outDir,
         const bId = o.joinedWith.balloonId ?? next?.texts?.find((x) => x.id === o.joinedWith.textId)?.balloonId;
         const bB = next?.number === o.joinedWith.page && (o.joinedWith.polygon ? { id: bId, polygon: o.joinedWith.polygon, bbox: o.joinedWith.bbox } : next.balloons.find((b) => b.id === bId));
         const B = bB && (await load(next));
-        if (!B || B.W !== A.W) { tooltip('emenda'); continue; }
+        if (!B || B.W !== A.W) { await force('emenda'); continue; }
         c = cleanJoint({ A, B, bA: balloon, bB, patches });
         join = { file: next.file, balloonId: bB.id };
       } else {
         const patch = patches.get(page.file) ?? patches.set(page.file, new Uint8Array(A.W * A.H * 4)).get(page.file);
         c = cleanUnit({ rgb: A.rgb, W: A.W, H: A.H, polygon: balloon.polygon, bbox: o.bbox, patch });
       }
-      if (c.empty) { tooltip('sem-tinta'); continue; }
+      if (c.empty) { await force('sem-tinta'); continue; }
       stats.cleaned++;
       if (join) stats.joined++;
       out.units.push({ id: t.id, mode: o.kind === 'narration' ? 'narracao' : 'balao', flag, join, box: c.box, bg: c.bg, ink: c.ink, fontMax: c.fontMax, lines: c.lines, upper: upperRatio(t.source) >= 0.8 });
@@ -298,6 +308,6 @@ export async function cleanChapter({ results3, ocrFile, translationFile, outDir,
   }
   const doc = { generatedAt: new Date().toISOString(), stats, pages };
   await writeFile(path.join(outDir, 'render.json'), JSON.stringify(doc, null, 2));
-  log(`${stats.units} falas: ${stats.cleaned} escritas (${stats.joined} balões cortados entre imagens, ${stats.free ?? 0} textos soltos), ${stats.tooltip} só com tooltip, ${stats.flagged} marcadas (revisar/erro) → ${path.join(outDir, 'render.json')}`);
+  log(`${stats.units} falas: ${stats.cleaned} escritas (${stats.joined} balões cortados entre imagens, ${stats.free ?? 0} textos soltos, ${stats.forced} escritas à força), ${stats.tooltip} só com tooltip, ${stats.flagged} marcadas (revisar/erro) → ${path.join(outDir, 'render.json')}`);
   return doc;
 }

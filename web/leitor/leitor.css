@@ -13,7 +13,7 @@ figure img { display: block; width: 100%; height: auto; }
 figure.com-medidas { min-height: 0; }
 /* Tradução: o PNG de limpeza cobre o texto original e o SVG escreve a tradução (tudo em pixels da imagem original). */
 figure .patch { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
-.tr-svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: hidden; }
+.tr-svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; z-index: 2; }  /* visible + z-index: a tradução de um balão cortado atravessa a emenda para a imagem de baixo, e um texto maior que o balão pode vazar */
 .tr-svg .tr { font-family: "Comic Neue", "Comic Sans MS", "Segoe UI", system-ui, sans-serif; font-weight: 700; }
 
 /* ---- controles flutuantes (escondidos até dar dois cliques na leitura) e barra de progresso lateral */

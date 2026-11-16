@@ -123,3 +123,111 @@ export function cleanFree({ rgb, W, H, bbox, patch }) {
   }
   return { bg: hex(bgRgb), ink: hex(inkColor), stroke, box, lines, fontMax, flat };
 }
+
+// ---- filtros de mínimo/máximo (separáveis) para achar traços finos: black-hat (letra escura) e top-hat (letra clara)
+function filtro(src, w, h, k, pick) {
+  const r = k >> 1, tmp = new Float64Array(w * h), out = new Float64Array(w * h);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    let v = src[y * w + x];
+    for (let i = Math.max(0, x - r); i <= Math.min(w - 1, x + r); i++) v = pick(v, src[y * w + i]);
+    tmp[y * w + x] = v;
+  }
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    let v = tmp[y * w + x];
+    for (let j = Math.max(0, y - r); j <= Math.min(h - 1, y + r); j++) v = pick(v, tmp[j * w + x]);
+    out[y * w + x] = v;
+  }
+  return out;
+}
+const minF = (a, w, h, k) => filtro(a, w, h, k, Math.min);
+const maxF = (a, w, h, k) => filtro(a, w, h, k, Math.max);
+
+// Último recurso: o texto foi lido e traduzido, mas nenhuma limpeza "bonita" se aplicou (balão cortado sem par, texto fora de
+// balão sobre a arte, balão sem tinta achada...). A tradução TEM que aparecer, então apaga o que der onde o texto está e deixa
+// o leitor escrever por cima, mesmo que passe do balão.
+//  - fundo liso (anel ao redor da região): pinta só as letras com a cor do fundo;
+//  - fundo misto (arte, borda de balão cortado...): acha só os TRAÇOS finos (black-hat/top-hat, que separam letra de fundo mesmo
+//    com dois fundos diferentes na mesma região) e preenche esses pixels pelas cores vizinhas, preservando o resto;
+//  - se não achar traço nenhum, cobre o retângulo todo do texto (como o sistema antigo);
+//  - letra escura em fundo claro e o contrário; sobre fundo misto, com contorno para continuar legível.
+// Devolve { bg, ink, stroke, box, lines, fontMax, covered } ou { empty: true, reason } (só se a região for inválida).
+export function cleanForce({ rgb, W, H, bbox, patch, lineHint = 1 }) {
+  let [bx, by, bw, bh] = bbox.map((v) => Math.round(v));
+  bx = Math.max(0, bx); by = Math.max(0, by); bw = Math.min(bw, W - bx); bh = Math.min(bh, H - by);
+  if (!(bw >= 6 && bh >= 6)) return { empty: true, reason: 'tamanho' };
+  if (bw * bh > 0.6 * W * H) return { empty: true, reason: 'tamanho' };
+  const m = Math.max(8, Math.round(bh * 0.4));
+  const rx = Math.max(0, bx - m), ry = Math.max(0, by - m), rw = Math.min(W, bx + bw + m) - rx, rh = Math.min(H, by + bh + m) - ry;
+  const px = (x, y) => ((ry + y) * W + rx + x) * 3;
+  const luma = new Float64Array(rw * rh);
+  for (let y = 0; y < rh; y++) for (let x = 0; x < rw; x++) { const o = px(x, y); luma[y * rw + x] = lumaOf(rgb[o], rgb[o + 1], rgb[o + 2]); }
+  const tx0 = bx - rx, ty0 = by - ry;
+  const inBox = (x, y, g) => x >= tx0 - g && x < tx0 + bw + g && y >= ty0 - g && y < ty0 + bh + g;
+  const idx = (pred) => { const a = []; for (let y = 0; y < rh; y++) for (let x = 0; x < rw; x++) if (pred(x, y)) a.push(y * rw + x); return a; };
+  const colorOf = (list) => [0, 1, 2].map((c) => median(list.map((i) => rgb[px(i % rw, Math.floor(i / rw)) + c])));
+  const ring = idx((x, y) => inBox(x, y, m) && !inBox(x, y, 2));
+  const inside = idx((x, y) => inBox(x, y, 0));
+  const ref = ring.length >= 30 ? ring : inside; // sem anel (texto colado nas bordas da imagem): usa a própria caixa
+  const ringRgb = colorOf(ref);
+  const ringL = lumaOf(...ringRgb);
+  const dev = ref.map((i) => Math.abs(luma[i] - ringL)).sort((a, b) => a - b);
+  const flat = ring.length >= 30 && dev[Math.floor(dev.length * 0.8)] < 18;
+  const zone = new Uint8Array(rw * rh);
+  for (let y = 0; y < rh; y++) for (let x = 0; x < rw; x++) if (inBox(x, y, 2)) zone[y * rw + x] = 1;
+  const ink = new Uint8Array(rw * rh);
+  let nInk = 0;
+  if (flat) {
+    for (let i = 0; i < ink.length; i++) if (zone[i] && Math.abs(luma[i] - ringL) > 45) { ink[i] = 1; nInk++; }
+  } else {
+    // traço = o que sobressai do fundo LOCAL: black-hat (escuro) e top-hat (claro). O kernel precisa ser um pouco maior que a
+    // espessura da letra; como ela não é conhecida, tenta kernels crescentes e fica com o primeiro que acha traço suficiente
+    // (kernel grande demais também pegaria cunhas finas de fundo junto da borda do balão).
+    for (const k of [11, 17, 25]) {
+      const closed = minF(maxF(luma, rw, rh, k), rw, rh, k), opened = maxF(minF(luma, rw, rh, k), rw, rh, k);
+      ink.fill(0); nInk = 0;
+      for (let i = 0; i < ink.length; i++) if (zone[i] && Math.max(closed[i] - luma[i], luma[i] - opened[i]) > 38) { ink[i] = 1; nInk++; }
+      if (nInk >= 0.015 * bw * bh) break;
+    }
+  }
+  const letters = nInk >= 12 && nInk <= 0.9 * bw * bh;
+  let mask;
+  if (letters) mask = dilate(ink, rw, rh, flat ? 3 : 2).map((v, i) => (v && zone[i] ? 1 : 0));
+  else { mask = new Uint8Array(rw * rh); for (let y = 0; y < rh; y++) for (let x = 0; x < rw; x++) if (inBox(x, y, 1)) mask[y * rw + x] = 1; }
+  // fundo de referência: liso = o anel; misto = o que NÃO é traço dentro da região (é o fundo sob as letras, ex.: o branco do balão)
+  const underText = flat ? null : idx((x, y) => inBox(x, y, 0) && !mask[y * rw + x]);
+  const bgRgb = flat || !underText || underText.length < 30 ? ringRgb : colorOf(underText);
+  const bgL = lumaOf(...bgRgb);
+  let covered = 0;
+  const setPx = (i, c) => { const o = ((ry + Math.floor(i / rw)) * W + rx + (i % rw)) * 4; patch[o] = c[0]; patch[o + 1] = c[1]; patch[o + 2] = c[2]; patch[o + 3] = 255; covered++; };
+  if (flat) {
+    for (let i = 0; i < mask.length; i++) if (mask[i]) setPx(i, ringRgb);
+  } else {
+    const reg = new Uint8Array(rw * rh * 3);
+    for (let y = 0; y < rh; y++) reg.set(rgb.subarray(px(0, y), px(0, y) + rw * 3), y * rw * 3);
+    const filled = inpaint(reg, rw, rh, mask);
+    for (let i = 0; i < mask.length; i++) if (mask[i]) setPx(i, [0, 1, 2].map((c) => Math.round(filled[i * 3 + c])));
+  }
+  // cor da letra e contorno: contraste com o fundo sob o texto; sobre fundo misto, contorno da cor oposta
+  const light = bgL < 128;
+  const inkRgb = light ? [255, 255, 255] : [0, 0, 0];
+  const stroke = flat ? null : light ? '#000000' : '#ffffff';
+  // linhas e tamanho máximo da fonte: corridas de linhas com tinta (ou a dica do OCR quando não achou letra)
+  let lines = Math.max(1, lineHint);
+  if (letters) {
+    const cnt = [];
+    for (let y = 0; y < rh; y++) { let n = 0; for (let x = 0; x < rw; x++) if (ink[y * rw + x]) n++; cnt.push(n); }
+    const thr = 0.3 * Math.max(...cnt);
+    const runs = [];
+    cnt.forEach((n, y) => { if (n > 0 && n >= thr) (runs.length && runs[runs.length - 1][1] === y ? (runs[runs.length - 1][1] = y + 1) : runs.push([y, y + 1])); });
+    if (runs.length) {
+      const tall = Math.max(...runs.map(([a, b]) => b - a));
+      lines = runs.reduce((acc, r) => (acc.length && r[0] - acc[acc.length - 1][1] < 0.25 * tall ? (acc[acc.length - 1][1] = r[1], acc) : [...acc, [...r]]), []).length;
+    }
+  }
+  const fontMax = Math.round(Math.min(80, Math.max(10, lines > 1 ? (bh / lines) * 0.95 : bh * 1.2)));
+  // caixa do texto: a região lida com folga; pode passar do que havia (o leitor deixa vazar), nunca da imagem
+  const gx = Math.round(bw * 0.12), gy = Math.round(bh * 0.12);
+  const x0 = Math.max(0, bx - gx), y0 = Math.max(0, by - gy);
+  const box = [x0, y0, Math.min(W, bx + bw + gx) - x0, Math.min(H, by + bh + gy) - y0];
+  return { bg: hex(bgRgb), ink: hex(inkRgb), stroke, box, lines, fontMax, covered, flat };
+}

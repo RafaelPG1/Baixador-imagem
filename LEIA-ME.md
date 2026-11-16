@@ -252,8 +252,14 @@ um termo não aparece na tradução; não força a troca) e `obras\<Obra>\<Capí
 `traducao.aviso.json`, as memórias (`memoria_*.json`) e os glossários no formato antigo são apagados das obras (o
 `traducao.json` novo e glossários no formato novo nunca são tocados). Os capítulos precisam ser traduzidos de novo.
 
-**Falas que o tradutor não reescreve** (efeitos sonoros, texto fora de balão e as que falharam) continuam originais na imagem e
-aparecem na verificação como "não reescrita". Tradução automática erra gírias e nomes: use a verificação para conferir.
+**Toda fala traduzida aparece na imagem.** Quando o balão não foi reconhecido (balão cortado na borda da página sem par na
+página seguinte, texto fora de balão, texto sobre a arte...), o tradutor escreve mesmo assim sobre a região lida: apaga só as
+letras originais (traços finos, preservando o balão e a arte ao redor; se não achar traço nenhum, cobre o retângulo do texto) e
+escreve a tradução. Na verificação essas falas aparecem como "escrita à força" com o motivo. **O texto pode vazar do balão**:
+se não couber sem encolher demais, a caixa cresce a partir do centro (até 2x) antes de a letra diminuir, e a tradução de um balão
+cortado atravessa a emenda para a imagem de baixo; fora do balão, o texto tem um contorno na cor do fundo para continuar legível.
+Só ficam sem escrita as falas que o motor não conseguiu traduzir (estado "erro") e as regiões que o OCR não leu.
+Tradução automática erra gírias e nomes: use a verificação para conferir.
 
 Pelo terminal: `python -m baixador --traduzir "obras\Obra\Cap 001"` (motor da aba Traduções). O que o Node faz sozinho,
 sem o Baixador: veja `tradutor\LEIA-ME.md`.

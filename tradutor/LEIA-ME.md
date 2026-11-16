@@ -39,7 +39,7 @@ node src/processar-capitulo.js --verificar --motor deepl      # só confere se o
 | 4a | `src/vision/ocr.js`, `src/ocr/` | OCR por região (Tesseract; PaddleOCR de reserva) |
 | 4b | `src/vision/translate.js`, `src/services/` | tradução em lotes com contexto e cache |
 | 4c | `src/vision/translation-view.js` | junta tudo por página |
-| 6 | `src/vision/clean.js`, `clean-free.js` | limpeza do texto original (PNG por página) e caixa de cada fala |
+| 6 | `src/vision/clean.js`, `clean-free.js` | limpeza do texto original (PNG por página) e caixa de cada fala; toda fala traduzida é escrita (`cleanForce` é o último recurso quando o balão não foi reconhecido) |
 | leitor | `src/obra/pipeline.js` | consolida o `traducao.json` (campo `formato: 2`) |
 
 No fim, só `traducao.json` e `traducao\limpeza\` ficam; as pastas das etapas e o cache são removidos.

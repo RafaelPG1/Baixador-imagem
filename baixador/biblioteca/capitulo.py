@@ -164,7 +164,7 @@ def _falas_usuario(pagina: Dict[str, Any], largura: float, altura: float) -> Lis
         if r.get("mode") not in MODOS_ESCRITOS or not isinstance(texto, str) or not texto.strip() or caixa is None:
             continue
         saida.append({
-            "modo": r["mode"], "caixa": caixa, "tinta": _cor(r.get("ink"), "#111111"), "contorno": _cor(r.get("stroke"), None),
+            "modo": r["mode"], "caixa": caixa, "tinta": _cor(r.get("ink"), "#111111"), "contorno": _cor(r.get("stroke"), None), "fundo": _cor(r.get("bg"), None),
             "fonteMax": round(_num(r.get("fontMax"), 4, 600, 40.0), 1), "maiuscula": bool(r.get("upper")), "texto": texto[:1200],
         })
     return saida

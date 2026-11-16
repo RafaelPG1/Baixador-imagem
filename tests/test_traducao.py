@@ -156,6 +156,7 @@ class TestLeitura(Biblioteca):
         d = json.loads(json.dumps(EXEMPLO))
         u = d["pages"][0]["units"]
         u[0]["render"]["ink"] = "url(javascript:alert(1))"
+        u[0]["render"]["bg"] = "red; background:url(x)"
         u[0]["render"]["fontMax"] = float("inf") if False else 1e9
         u[1]["render"]["box"] = [0, 0, -5, 10]
         u[2]["render"]["box"] = [10, 10, 1e12, 10]
@@ -167,6 +168,7 @@ class TestLeitura(Biblioteca):
         self.assertEqual(len(im["falas"]), 1)                                     # só a fala com caixa válida
         f = im["falas"][0]
         self.assertEqual(f["tinta"], "#111111")
+        self.assertIsNone(f["fundo"])
         self.assertLessEqual(f["fonteMax"], 40.0)
         self.assertLessEqual(len(f["texto"]), 1200)
 

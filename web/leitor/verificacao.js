@@ -9,7 +9,7 @@
   function sv(tag, attrs) { var n = document.createElementNS(NS, tag); Object.keys(attrs || {}).forEach(function (k) { n.setAttribute(k, attrs[k]); }); return n; }
   var ROTULO = { ok: 'ok', revisar: 'revisar', erro: 'erro' };
   var MODOS = { balao: 'escrita no balão', narracao: 'escrita na narração', texto: 'texto solto reescrito', tooltip: 'não reescrita (só conferência)', nenhum: 'copiada (sem letras)' };
-  var MOTIVOS = { erro: 'sem tradução', 'fora-de-balao': 'fora de balão', emenda: 'balão cortado sem par', 'sem-balao': 'balão não achado', 'sem-tinta': 'sem texto para apagar' };
+  var MOTIVOS = { erro: 'sem tradução', 'fora-de-balao': 'escrita à força: fora de balão', emenda: 'escrita à força: balão cortado sem par', 'sem-balao': 'escrita à força: balão não achado', 'sem-tinta': 'escrita à força: texto do balão não achado', 'texto-da-cena': 'escrita à força: texto sobre a arte', tamanho: 'escrita à força: região atípica', 'sem-fundo': 'escrita à força: sem fundo de referência' };
 
   /* ---------- camada sobre cada imagem: balões e regiões lidas pelo OCR ---------- */
   var formas = {};                                                    // id da fala → forma na imagem (para destacar)
