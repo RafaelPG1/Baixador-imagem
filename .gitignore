@@ -31,6 +31,10 @@ __pycache__/
 Thumbs.db
 
 # ---- app Android ----
+# cache e saída do Gradle (gerados a cada compilação, em qualquer pasta, inclusive no plugin): nunca versionar
+.gradle/
+android-app/**/build/
+local.properties
 android-app/node_modules/
 android-app/android/
 # cópias geradas de web/leitor (scripts/copiar_leitor.py)
