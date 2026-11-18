@@ -244,6 +244,21 @@ traduzidos vêm do cache). A tradução antiga continua valendo, e legível, at�
 traduzidos podem ser marcados). **Excluir tradução** (no capítulo ou na obra) apaga `traducao.json`, `traducao\` e restos de uma
 execução interrompida; as imagens originais ficam. Isto não pode ser desfeito.
 
+**Erro "prediction aborted, token repeat limit reached":** é uma proteção do próprio Ollama, que interrompe a geração quando o
+mesmo token sai mais de 30 vezes seguidas (o limite é fixo no servidor, não dá para mudar). Acontece quando o modelo entra num
+laço (mais comum com temperatura 0) ou quando o texto tem repetição de verdade ("AAAAAAAAAH", "HA HA HA HA...", "........").
+O tradutor lida assim, sem mexer na qualidade das traduções normais:
+
+- Repetições longas da origem são reduzidas antes de ir ao modelo ("AAAAAAAAAAAAH" vira "AAAAAAH"), o que evita a maioria dos casos.
+- Cada resposta precisa terminar de verdade (o Ollama avisa o fim). **Resposta cortada nunca é usada**, nem por tamanho, nem por queda
+  da conexão, nem por repetição.
+- Se uma resposta repete ou vem cortada, o lote é refeito fala por fala; cada fala tem até 3 tentativas (a 1ª é a normal; as outras
+  usam um pouco de aleatoriedade e penalidade maior para repetição, com semente fixa) e, por fim, é traduzida frase por frase.
+  Uma fala que ainda falhar fica **sem tradução e marcada como erro** (aparece na verificação com o motivo); o capítulo continua.
+- Um laço é detectado no meio da geração e cortado cedo, e há um teto de tokens proporcional ao texto, para não prender o notebook.
+- O registro mostra o que aconteceu (texto da fala e o fim do que o modelo estava repetindo). Só erro de infraestrutura (Ollama
+  parado, modelo ausente, tempo esgotado) interrompe o capítulo.
+
 **Glossário e correções (opcionais):** `obras\<Obra>\glossario.json` com `{ "TERMO": "tradução" }` (o tradutor avisa quando
 um termo não aparece na tradução; não força a troca) e `obras\<Obra>\<Capítulo>\correcoes.json` com `{ "p001-b3": "texto certo" }`
 (corrige o OCR de uma fala, pelo id que aparece na verificação). Arquivo fora desse formato é ignorado, com aviso no registro.

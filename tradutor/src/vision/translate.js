@@ -4,14 +4,17 @@ import path from 'node:path';
 import { progresso } from '../progresso.js';
 import { TranslationError } from '../errors.js';
 import { getEngines, translate as translateWith, getDefaultEngine } from '../translator.js';
+import { RETRY_LEVELS } from '../services/local.js';
+import { degenerate, squeezeRuns } from '../repeticao.js';
 
 const BATCH = 8; // falas por lote
 const CONTEXT = 3; // falas anteriores mostradas como contexto
 const MAX_CHARS = 1500; // teto de texto novo por lote (cabe no num_ctx 4096 do modelo local)
 const ROW = 80; // px: balões na mesma faixa vertical leem-se da esquerda para a direita
-const CACHE_VERSION = 1; // mude ao trocar o formato do prompt: invalida o cache
-// Só estes erros do lote justificam tentar cada fala sozinha. Qualquer outro (Ollama fora do ar, modelo ausente, limite, timeout) aborta a execução; o cache permite retomar.
-const RECOVERABLE = new Set(['BAD_BATCH', 'EMPTY_RESPONSE']);
+const CACHE_VERSION = 2; // mude ao trocar o formato do prompt: invalida o cache (2: repetições longas da origem são reduzidas antes de ir ao modelo)
+// Só estes erros justificam tentar de outro jeito (fala por fala, amostragem alternativa). Resposta ruim, repetição e resposta
+// cortada são problemas DESTE texto; Ollama fora do ar, modelo ausente, limite ou timeout aborta a execução (o cache permite retomar).
+const RECOVERABLE = new Set(['BAD_BATCH', 'EMPTY_RESPONSE', 'REPETITION', 'TRUNCATED']);
 
 const hasLetters = (s) => /[A-Za-z]/.test(s);
 
@@ -46,7 +49,7 @@ export function makeBatches(units, { size = BATCH, context = CONTEXT, maxChars =
 
 // Uma fala por linha, numerada: "[1] TEXTO". As de contexto vêm primeiro e também voltam traduzidas (validam a resposta inteira).
 export const buildBatchText = ({ context, units }) =>
-  [...context, ...units].map((u, i) => `[${i + 1}] ${u.source.replace(/\s*\n\s*/g, ' ')}`).join('\n');
+  [...context, ...units].map((u, i) => `[${i + 1}] ${squeezeRuns(u.source.replace(/\s*\n\s*/g, ' '))}`).join('\n');
 
 // Lê a resposta e exige exatamente os números 1..n, cada um uma vez, todos com texto. Senão lança BAD_BATCH.
 export function parseBatch(output, n) {
@@ -71,22 +74,73 @@ export function parseBatch(output, n) {
 const hash = (s) => createHash('sha256').update(s).digest('hex').slice(0, 24);
 export const batchKey = (batch, provider, glossary) => hash(JSON.stringify([CACHE_VERSION, provider, buildBatchText(batch), batch.context.length, glossary]));
 
-// Traduz um lote. Primeiro tudo junto; se a resposta não passar na validação, cada fala vai sozinha (modo "individual").
-// Uma fala que ainda falhar fica com status "erro" e sem tradução, nunca com a tradução de outra.
-export async function translateBatch(batch, engine, translateFn) {
+const snip = (s, n = 70) => String(s ?? '').replace(/\s+/g, ' ').trim().slice(0, n);
+const friendly = (e) => (e.code === 'REPETITION' ? 'o modelo entrou em repetição e não saiu dela nas tentativas' : e.code === 'TRUNCATED' ? 'a resposta do Ollama veio cortada nas tentativas' : e.message);
+
+// Frases de um texto (para o último recurso de uma fala que não sai inteira).
+export function splitSentences(text) {
+  const raw = String(text).split(/(?<=[.!?…])\s+/).map((x) => x.trim()).filter(Boolean);
+  const out = [];
+  for (const piece of raw) (out.length && (piece.length < 12 || out[out.length - 1].length < 12) ? (out[out.length - 1] += ` ${piece}`) : out.push(piece));
+  return out;
+}
+
+// Uma fala sozinha, com tentativas. Falha recuperável (repetição, resposta cortada, vazia ou defeituosa) tenta de novo com
+// amostragem alternativa; se ainda falhar e a fala tiver mais de uma frase, traduz frase por frase. Nunca devolve resposta
+// incompleta: ou vem a tradução inteira, ou lança o último erro.
+export async function translateOne(source, engine, translateFn, { log, label = '', split = true } = {}) {
+  const levels = engine === 'local' ? RETRY_LEVELS : 1; // só o motor local muda de amostragem
+  let last;
+  for (let retry = 0; retry < levels; retry++) {
+    try {
+      const t = (await translateFn(squeezeRuns(source), engine, { retry })).translation.trim();
+      if (!t) throw new TranslationError('EMPTY_RESPONSE', 'O modelo não devolveu tradução.', 502);
+      if (degenerate(source, t)) throw new TranslationError('REPETITION', 'A tradução saiu repetitiva.', 502);
+      if (retry) log?.(`  ${label}recuperada na tentativa ${retry + 1}/${levels} (amostragem alternativa)`);
+      return t;
+    } catch (e) {
+      if (!RECOVERABLE.has(e.code)) throw e;
+      last = e;
+      log?.(`  ${label}tentativa ${retry + 1}/${levels} falhou: ${e.message}${e.partial ? ` | fim da resposta: «${e.partial.slice(-60).replace(/\s+/g, ' ')}»` : ''}`);
+    }
+  }
+  const parts = split ? splitSentences(source) : [];
+  if (parts.length > 1) {
+    try {
+      const out = [];
+      for (const [i, part] of parts.entries()) out.push(await translateOne(part, engine, translateFn, { log, label: `${label}frase ${i + 1}/${parts.length} `, split: false }));
+      log?.(`  ${label}recuperada traduzindo frase por frase`);
+      return out.join(' ');
+    } catch (e) {
+      if (!RECOVERABLE.has(e.code)) throw e;
+      last = e;
+    }
+  }
+  throw last;
+}
+
+// Traduz um lote. Primeiro tudo junto; se a resposta não passar na validação (ou o modelo repetir/cortar), cada fala vai sozinha
+// (modo "individual", com tentativas). Uma fala que ainda falhar fica com status "erro" e sem tradução, nunca com a tradução de
+// outra nem com uma tradução pela metade. O capítulo segue: só erro de infraestrutura (Ollama fora do ar...) aborta.
+export async function translateBatch(batch, engine, translateFn, log) {
   try {
-    const all = parseBatch((await translateFn(buildBatchText(batch), engine)).translation, batch.context.length + batch.units.length);
+    const items = [...batch.context, ...batch.units];
+    const all = parseBatch((await translateFn(buildBatchText(batch), engine)).translation, items.length);
+    items.forEach((u, i) => {
+      if (degenerate(u.source, all[i])) throw new TranslationError('REPETITION', `A fala [${i + 1}] saiu repetitiva na resposta do lote.`, 502);
+    });
     return { mode: 'lote', results: batch.units.map((u, i) => ({ id: u.id, translation: all[batch.context.length + i] })) };
   } catch (err) {
     if (!RECOVERABLE.has(err.code)) throw err;
+    log?.(`lote: ${err.message}${err.partial ? ` | fim da resposta: «${err.partial.slice(-60).replace(/\s+/g, ' ')}»` : ''} → traduzindo as ${batch.units.length} falas uma a uma`);
     const results = [];
     for (const u of batch.units) {
       try {
-        const alone = (await translateFn(u.source, engine)).translation.trim();
-        results.push(alone ? { id: u.id, translation: alone } : { id: u.id, error: 'resposta vazia' });
+        results.push({ id: u.id, translation: await translateOne(u.source, engine, translateFn, { log, label: `fala ${u.id} «${snip(u.source, 50)}» ` }) });
       } catch (e) {
         if (!RECOVERABLE.has(e.code)) throw e;
-        results.push({ id: u.id, error: e.message });
+        log?.(`  fala ${u.id} «${snip(u.source, 50)}» ficou SEM tradução: ${friendly(e)}`);
+        results.push({ id: u.id, error: friendly(e) });
       }
     }
     return { mode: 'individual', reason: err.message, results };
@@ -107,7 +161,7 @@ async function readJson(file, fallback) {
   }
 }
 
-export async function translateChapter(ocrFile, outDir, { engine, translateFn = (t, e) => translateWith(t, e, getEngines()), log = console.log, size, context } = {}) {
+export async function translateChapter(ocrFile, outDir, { engine, translateFn = (t, e, o) => translateWith(t, e, getEngines(), o), log = console.log, size, context } = {}) {
   const ocr = await readJson(ocrFile, null);
   if (!ocr) throw new Error(`Não achei ${ocrFile}. Rode "npm run ocr" antes.`);
   const base = path.dirname(ocrFile);
@@ -127,7 +181,7 @@ export async function translateChapter(ocrFile, outDir, { engine, translateFn = 
     let entry = await readJson(file, null);
     if (entry) stats.cached++;
     else {
-      entry = await translateBatch(batch, engine, translateFn);
+      entry = await translateBatch(batch, engine, translateFn, log);
       if (entry.results.every((r) => !r.error)) await writeFile(file, JSON.stringify(entry, null, 2)); // lote com erro não é guardado: roda de novo
       stats.translated++;
       log(`lote ${i + 1}/${batches.length}: ${batch.units.length} falas (${entry.mode}) — ${((Date.now() - t0) / 1000).toFixed(0)} s`);

@@ -44,6 +44,13 @@ node src/processar-capitulo.js --verificar --motor deepl      # só confere se o
 
 No fim, só `traducao.json` e `traducao\limpeza\` ficam; as pastas das etapas e o cache são removidos.
 
+## Repetição e respostas cortadas (Ollama)
+
+`src/services/local.js` só aceita uma resposta que terminou (`done` e `done_reason: stop`); cortada por tamanho, por queda da conexão ou
+por repetição, ela é descartada (`TRUNCATED` / `REPETITION`). `src/repeticao.js` detecta laços e reduz repetições da origem;
+`src/vision/translate.js` refaz o lote fala por fala, com até 3 amostragens, e por último frase por frase. Fala que não sai inteira
+fica com status `erro`, nunca com tradução pela metade.
+
 ## Testes
 
 ```powershell

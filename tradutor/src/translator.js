@@ -20,11 +20,12 @@ export const resetEngines = () => { registry = undefined; };
 export const getDefaultEngine = () => defaultEngineId(getEngines(), process.env);
 
 // Usa exatamente o motor pedido; se ele falhar, o erro sobe. Nenhum outro motor é tentado.
-export async function translate(text, engineId, engines = getEngines()) {
+// `opts` (ex.: { retry: 1 }) vai para o motor; os de nuvem o ignoram.
+export async function translate(text, engineId, engines = getEngines(), opts = {}) {
   const clean = validate(text);
   const id = engineId ?? getDefaultEngine();
   if (typeof id !== 'string' || !Object.hasOwn(engines, id)) {
     throw new TranslationError('UNKNOWN_ENGINE', 'Esse motor não está disponível. Escolha outro na lista.', 400);
   }
-  return { translation: await engines[id].translate(clean), engine: id, provider: engines[id].name };
+  return { translation: await engines[id].translate(clean, opts), engine: id, provider: engines[id].name };
 }

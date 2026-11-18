@@ -15,7 +15,7 @@ const traduz = (s) => (TRAD.find(([re]) => re.test(s)) ?? [null, `(traduzido) ${
 
 // Ollama falso: /api/tags lista o modelo; /api/chat devolve as falas numeradas, ou erro 500 enquanto `estado.quebrado`.
 async function ollamaFalso(t) {
-  const estado = { quebrado: false, modelos: ['translategemma:4b'], chamadas: 0 };
+  const estado = { quebrado: false, modelos: ['translategemma:4b'], chamadas: 0, defeitos: [], pedidos: [] };
   const server = http.createServer((req, res) => {
     if (req.url === '/api/tags') return res.end(JSON.stringify({ models: estado.modelos.map((name) => ({ name })) }));
     let body = '';
@@ -23,10 +23,16 @@ async function ollamaFalso(t) {
     req.on('end', () => {
       estado.chamadas++;
       if (estado.quebrado) { res.statusCode = 500; return res.end(JSON.stringify({ error: 'falha simulada' })); }
-      const texto = JSON.parse(body).messages[0].content.split('Please translate the following English text into Portuguese:\n\n\n')[1];
+      const pedido = JSON.parse(body);
+      estado.pedidos.push(pedido.options);
+      const texto = pedido.messages[0].content.split('Please translate the following English text into Portuguese:\n\n\n')[1];
+      // defeitos simulados só na amostragem normal (sem repeat_penalty): a retentativa com amostragem alternativa sai bem
+      const defeito = pedido.options.repeat_penalty === undefined && estado.defeitos.find(([re]) => re.test(texto));
+      if (defeito && defeito[1] === 'repeticao') { res.write(`${JSON.stringify({ message: { content: 'ha ha ha ha' } })}\n`); return res.end(`${JSON.stringify({ error: 'prediction aborted, token repeat limit reached' })}\n`); }
+      if (defeito && defeito[1] === 'cortada') return res.end(`${JSON.stringify({ message: { content: 'TEMOS QUE SAIR ANT' } })}\n`); // conexão acabou sem done
       const out = texto.split('\n').map((l) => { const m = l.match(/^\[(\d+)\]\s*(.*)$/); return m ? `[${m[1]}] ${traduz(m[2])}` : traduz(l); }).join('\n');
       res.write(`${JSON.stringify({ message: { content: out } })}\n`);
-      res.end(`${JSON.stringify({ done: true, message: { content: '' } })}\n`);
+      res.end(`${JSON.stringify({ done: true, done_reason: 'stop', message: { content: '' } })}\n`);
     });
   });
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
@@ -84,6 +90,28 @@ test('capítulo do Baixador: traduz com o pipeline real, deixa só traducao.json
   assert.ok(fala(/WORRY/).ocr.confidence > 0);
   assert.ok(d.pages[0].balloons[0].polygon.length > 3);
   assert.equal(await resultadoValido(path.join(cap, 'traducao.json')), true);
+});
+
+test('Ollama repete ou corta a resposta: o capítulo termina, nada incompleto é salvo e tudo sai traduzido pela amostragem alternativa', { timeout: 240_000 }, async (t) => {
+  const ollama = await ollamaFalso(t);
+  ollama.defeitos = [[/BELIEVE/, 'repeticao'], [/LEAVE/, 'cortada']];
+  const { cap } = await biblioteca();
+  const linhas = [];
+  const r = await traduzirCapitulo({ capitulo: cap, motor: 'local', env: { ...process.env, ...ollama.env }, log: (m) => linhas.push(m) });
+  assert.equal(r.falas, 3);
+  const d = JSON.parse(await readFile(path.join(cap, 'traducao.json'), 'utf8'));
+  const falas = d.pages[0].units;
+  assert.equal(falas.length, 3);
+  const fala = (re) => falas.find((u) => re.test(u.source));
+  assert.match(fala(/BELIEVE/).translation, /NÃO ACREDITO QUE VOCÊ FEZ ISSO!$/); // inteira, não "ha ha ha ha"
+  assert.match(fala(/LEAVE/).translation, /ELES CHEGUEM\.$/); // inteira, não "TEMOS QUE SAIR ANT"
+  assert.ok(falas.every((u) => u.status !== 'erro' && u.render.mode !== 'tooltip'));
+  assert.ok(falas.every((u) => !/ha ha|SAIR ANT$/.test(u.translation)));
+  assert.ok(linhas.some((l) => /repetição de tokens/.test(l)) && linhas.some((l) => /cortada|terminou antes do fim/.test(l)), 'o log explica o que aconteceu');
+  assert.ok(linhas.some((l) => /recuperada na tentativa 2\/3/.test(l)));
+  assert.ok(ollama.pedidos.some((o) => o.repeat_penalty === 1.18 && o.seed === 7), 'a retentativa usou a amostragem alternativa');
+  assert.ok(ollama.pedidos.every((o) => o.num_predict >= 160 && o.num_ctx === 4096));
+  assert.ok(ollama.pedidos.some((o) => o.repeat_penalty === undefined && o.temperature === 0), 'a primeira tentativa continua sendo a normal (temperatura 0)');
 });
 
 test('já traduzido: não chama o motor de novo, a não ser com refazer', { timeout: 180_000 }, async (t) => {
