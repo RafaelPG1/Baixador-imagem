@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from baixador.biblioteca import organizacao as org
+from baixador.nucleo.cache_arquivos import CachePorData
 from baixador.nucleo.imagens import detectar_formato
 from baixador.traducao import legado
 
@@ -36,12 +37,24 @@ def pasta_imagens(pasta: Path) -> Path:
     return sub if sub.is_dir() and not sub.is_symlink() else pasta
 
 
+_CACHE_IMAGENS = CachePorData(maximo=20000)
+
+
 def listar_imagens(pasta: Path) -> List[str]:
     """Nomes das imagens do capítulo (em `img/`, ou na própria pasta no formato antigo), em ordem natural (001, 002, ..., 010).
-    Confere o conteúdo, não só a extensão. Os arquivos estão em `pasta_imagens(pasta) / nome`."""
+    Confere o conteúdo, não só a extensão. Os arquivos estão em `pasta_imagens(pasta) / nome`.
+
+    Abrir cada imagem para conferir o formato é o que mais pesa quando a biblioteca é consultada (centenas de milhares de arquivos),
+    então o resultado fica guardado por capítulo e só é refeito quando a pasta de imagens muda (arquivo novo, apagado ou renomeado).
+    """
+    destino = pasta_imagens(pasta)
+    return list(_CACHE_IMAGENS.obter(destino, lambda: tuple(_ler_imagens(destino))))
+
+
+def _ler_imagens(destino: Path) -> List[str]:
     nomes: List[str] = []
     try:
-        entradas = list(pasta_imagens(pasta).iterdir())
+        entradas = list(destino.iterdir())
     except OSError:
         return []
     for entrada in entradas:
@@ -70,15 +83,23 @@ def _subpastas(pasta: Path) -> List[Path]:
 _CONTAGENS = re.compile(rb'"counts"\s*:\s*(\{[^{}]*\})')
 
 
-def _contagens(pasta: Path) -> Dict[str, int]:
-    """{"ok": n, "revisar": n, "erro": n, ...} do traducao.json novo, lendo só o começo do arquivo (o campo vem antes das páginas)."""
+_CACHE_CONTAGENS = CachePorData(maximo=20000)
+
+
+def _contagens_do_disco(arquivo: Path) -> Dict[str, int]:
     try:
-        with (pasta / NOME_TRADUCAO).open("rb") as f:
+        with arquivo.open("rb") as f:
             achado = _CONTAGENS.search(f.read(8192))
         bruto = json.loads(achado.group(1)) if achado else {}
         return {str(k): int(v) for k, v in bruto.items() if isinstance(v, (int, float))}
     except (OSError, ValueError, TypeError):
         return {}
+
+
+def _contagens(pasta: Path) -> Dict[str, int]:
+    """{"ok": n, "revisar": n, "erro": n, ...} do traducao.json novo, lendo só o começo do arquivo (o campo vem antes das páginas)."""
+    arquivo = pasta / NOME_TRADUCAO
+    return dict(_CACHE_CONTAGENS.obter(arquivo, lambda: _contagens_do_disco(arquivo)))
 
 
 def _varrer(raiz: Path) -> List[Dict[str, Any]]:

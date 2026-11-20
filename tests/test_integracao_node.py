@@ -62,6 +62,7 @@ class OllamaFalso:
 
     def parar(self) -> None:
         self.servidor.shutdown()
+        self.servidor.server_close()
 
 
 def esperar(tarefa: executor.TarefaTraducao, ate: float = 240) -> Dict[str, Any]:

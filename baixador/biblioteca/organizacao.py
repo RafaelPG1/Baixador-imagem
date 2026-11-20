@@ -6,12 +6,15 @@ A obra (o "conjunto") já identifica a história; por isso a pasta do capítulo 
 Tudo aqui é Python puro (sem navegador nem OCR) para poder ser testado sozinho.
 """
 
+import copy
 import json
 import re
 import unicodedata
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.parse import unquote, urlsplit
+
+from baixador.nucleo.cache_arquivos import CachePorData
 
 NOME_META = "capitulo.json"
 
@@ -252,12 +255,21 @@ def gravar_meta(pasta: Path, obra: str, numero: Optional[str], titulo: str, url:
         pass                                                 # extra: não pode atrapalhar o download
 
 
-def ler_meta(pasta: Path) -> Dict[str, Any]:
+_CACHE_META = CachePorData(maximo=20000)
+
+
+def _ler_meta_do_disco(arquivo: Path) -> Dict[str, Any]:
     try:
-        dados = json.loads((Path(pasta) / NOME_META).read_text(encoding="utf-8"))
+        dados = json.loads(arquivo.read_text(encoding="utf-8"))
         return dados if isinstance(dados, dict) else {}
     except (OSError, ValueError):
         return {}
+
+
+def ler_meta(pasta: Path) -> Dict[str, Any]:
+    """Dados do `capitulo.json` de uma pasta ({} se não houver). Guardado em cache até o arquivo mudar; quem recebe pode alterar a cópia."""
+    arquivo = Path(pasta) / NOME_META
+    return copy.deepcopy(_CACHE_META.obter(arquivo, lambda: _ler_meta_do_disco(arquivo)))
 
 
 def descrever_capitulo(pasta: Path, obra_da_pasta: Optional[str] = None) -> Dict[str, Any]:

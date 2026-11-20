@@ -11,18 +11,27 @@ import re
 from pathlib import Path
 from typing import Dict, List
 
+from baixador.nucleo.cache_arquivos import CachePorData
+
 NOMES_CAPITULO = ("traducao.parcial.json", "traducao.anterior.json", "traducao.aviso.json")
 NOMES_OBRA = ("memoria_traducao.json", "memoria_termos.json")
 _FORMATO_NOVO = re.compile(rb'"formato"\s*:\s*2\b')
 
 
-def traducao_nova(arquivo: Path) -> bool:
-    """O `traducao.json` é do formato novo? Lê só o começo do arquivo (o campo "formato" é o primeiro)."""
+_CACHE_FORMATO = CachePorData(maximo=20000)
+
+
+def _formato_novo_no_disco(arquivo: Path) -> bool:
     try:
         with arquivo.open("rb") as f:
             return bool(_FORMATO_NOVO.search(f.read(120)))
     except OSError:
         return False
+
+
+def traducao_nova(arquivo: Path) -> bool:
+    """O `traducao.json` é do formato novo? Lê só o começo do arquivo (o campo "formato" é o primeiro). Guardado até o arquivo mudar."""
+    return _CACHE_FORMATO.obter(arquivo, lambda: _formato_novo_no_disco(arquivo))
 
 
 def _glossario_antigo(arquivo: Path) -> bool:

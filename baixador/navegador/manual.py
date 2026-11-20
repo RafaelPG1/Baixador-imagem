@@ -14,6 +14,7 @@ As imagens encontradas ficam só na memória (com limite) até serem gravadas ou
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import queue
 import sys
@@ -25,6 +26,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from urllib.parse import urljoin, urlsplit
 
 from baixador.nucleo import seguranca
+from baixador.navegador import capitulos_site as cs
 from baixador.nucleo.sequencia import dimensoes_suspeitas, numeros_ausentes
 from baixador.navegador.captura import Capturador, _resumo
 from baixador.nucleo.erros import (
@@ -521,6 +523,55 @@ def dominio_base(host: str) -> str:
     return ".".join(partes[-2:])
 
 
+# Links de capítulo da página aberta: [endereço, texto] de cada <a> e de cada <option> de menu (a lista oficial de muitos leitores).
+JS_LISTA_DA_PAGINA = r"""
+() => {
+  const pares = [], limpa = (t) => (t || '').trim().replace(/\s+/g, ' ').slice(0, 100);
+  document.querySelectorAll('a[href]').forEach(a => { if (pares.length < 6000) pares.push([a.href, limpa(a.innerText || a.textContent)]); });
+  document.querySelectorAll('option').forEach(o => {
+    const v = o.value || o.getAttribute('data-href') || o.getAttribute('data-url');
+    if (v && pares.length < 6000) pares.push([v, limpa(o.textContent)]);
+  });
+  return pares;
+}
+"""
+SEM_CAPA_VALIDADE_S = 7 * 24 * 3600          # obra cuja capa não foi achada: não insiste a cada execução, só depois de uma semana
+VALIDADE_LISTA_S = 600.0                       # a lista de capítulos do site é relida a cada 10 minutos (ou antes de concluir "acabou")
+
+
+def _arquivo_sem_capa() -> Path:
+    from baixador import configuracao
+
+    return configuracao.DADOS / "capas_sem_resultado.json"
+
+
+def _capa_sem_resultado_recente(obra: str) -> bool:
+    try:
+        quando = float(json.loads(_arquivo_sem_capa().read_text(encoding="utf-8")).get(obra, 0))
+    except (OSError, ValueError, TypeError, AttributeError):
+        return False
+    return time.time() - quando < SEM_CAPA_VALIDADE_S
+
+
+def _marcar_capa_sem_resultado(obra: str) -> None:
+    try:
+        arquivo = _arquivo_sem_capa()
+        try:
+            dados = json.loads(arquivo.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            dados = {}
+        dados = dados if isinstance(dados, dict) else {}
+        dados[obra] = time.time()
+        if len(dados) > 500:
+            dados = dict(sorted(dados.items(), key=lambda kv: kv[1])[-300:])
+        arquivo.parent.mkdir(parents=True, exist_ok=True)
+        temporario = arquivo.with_suffix(".tmp")
+        temporario.write_text(json.dumps(dados), encoding="utf-8")
+        temporario.replace(arquivo)
+    except OSError:
+        pass
+
+
 def mesmo_site(url_a: str, url_b: str) -> bool:
     from urllib.parse import urlsplit
 
@@ -555,6 +606,13 @@ class SessaoManual:
         self._ao_concluir: Optional[Callable[[List[Path]], None]] = None   # tradução automática ao fim de todos os downloads
         self.aviso = ""                                  # parada do automático em vários capítulos (mostrada ao usuário)
         self._resultado_proximo: Optional[Tuple[bool, str]] = None
+        self._proximo_tipo = ""                           # como terminou o último "próximo": ok | fim | fora-da-lista | invalido | erro
+        self._indices: Dict[str, Tuple[float, Optional[cs.IndiceSite]]] = {}   # lista de capítulos do site, por obra
+        self._html_serie: Dict[str, bytes] = {}           # página da obra já baixada (serve à lista de capítulos e à capa)
+        self._inicio_info: Optional[Dict[str, Any]] = None
+        self._ultimo_aviso_numero = ""
+        self._ultima_acao_fim = 0.0                       # quando terminou o último comando do navegador (próximo/procurar/...)
+        self._capas_para_o_fim: List[Tuple[Path, str]] = []
         self._principal = None
         self._salvando = threading.Lock()
         self.colecao = Colecao()
@@ -706,7 +764,7 @@ class SessaoManual:
             if criada:
                 pagina.goto(url_obra, wait_until="domcontentloaded", timeout=self._timeout * 1500)
             try:
-                pagina.wait_for_selector(SELETOR_CAPA, timeout=15000, state="attached")
+                pagina.wait_for_selector(SELETOR_CAPA, timeout=5000, state="attached")
             except ErroPlaywright:
                 pass                                           # sem a imagem: o og:image/HTML bruto ainda podem servir
             info = pagina.evaluate(JS_CAPA)
@@ -807,7 +865,13 @@ class SessaoManual:
             info = dict(self.pagina_info)
         achado = org.extrair_capitulo(info.get("titulo", ""), info.get("url", ""))
         obra = org.limpar_nome(organizar.get("obra") or "", 80) or achado["obra"] or ""
-        numero = org.normalizar_numero(organizar.get("numero")) or achado["numero"]
+        # o número vem da lista do site ou do endereço (que não "atrasam"); o título da aba só entra se nada disso servir
+        url_info = info.get("url", "")
+        atual = cs.identificar_atual(url_info, info.get("titulo", ""), cs.modelo_url(url_info), self._indice_guardado(url_info))
+        if atual.aviso and atual.aviso != self._ultimo_aviso_numero:
+            self._ultimo_aviso_numero = atual.aviso
+            self._registrar(f"Atenção: {atual.aviso}")
+        numero = org.normalizar_numero(organizar.get("numero")) or atual.numero or achado["numero"]
         titulo = org.limpar_nome(organizar.get("titulo") or "", 80) or achado["titulo"] or ""
         try:
             r = acervo.resolver_obra(Path(base).expanduser(), obra, info.get("url", ""))
@@ -906,16 +970,26 @@ class SessaoManual:
 
             organizar = dict(organizar) if organizar is not None else None
             visitados: set = set()
-            feitos: List[str] = []
+            feitos: List[str] = []                  # capítulos tratados (baixados, já existentes ou o de partida)
+            baixados: List[str] = []                # só os que foram realmente baixados agora
             pastas_feitas: List[Path] = []
             ultimo = ""
+            if self.continuar_ativo:                # a página aberta existe mesmo na lista de capítulos do site?
+                inicio = self._consultar_inicio()
+                if inicio and inicio["atual"].numero is not None:
+                    if inicio["atual"].aviso:
+                        self._registrar(f"Atenção: {inicio['atual'].aviso}")
+                    comeco = cs.decidir_proximo(inicio["indice"], inicio["atual"])
+                    if comeco.tipo == "fora-da-lista":
+                        manter_aberto = True
+                        return self._parar_aviso(comeco.mensagem, baixados)
             while len(feitos) < LIMITE_CAPITULOS_AUTO:
                 with self._lock:
                     url_atual = self.pagina_info.get("url", "")
                 if self.continuar_ativo and feitos and url_atual in visitados:
                     manter_aberto = True
                     return self._parar_aviso(
-                        f"voltei a uma página já baixada ({url_atual[:100]}); parei para não repetir. Confira o site.", feitos
+                        f"voltei a uma página já baixada ({url_atual[:100]}); parei para não repetir. Confira o site.", baixados
                     )
                 visitados.add(url_atual)
                 if feitos and organizar is not None:
@@ -924,13 +998,15 @@ class SessaoManual:
                 if not ok:
                     if self.continuar_ativo or feitos:
                         manter_aberto = not self._fechar.is_set()
-                        return self._parar_aviso(motivo, feitos, parou_em=ultimo)
+                        return self._parar_aviso(motivo, baixados, parou_em=ultimo)
                     self._registrar(f"Modo automático: {motivo}")
                     return
                 if organizar is not None:
                     organizar["obra"] = cap.get("obra") or organizar.get("obra", "")
                 ultimo = org.rotulo_capitulo(cap.get("numero"), cap.get("titulo") or "") if organizar is not None else "capítulo"
                 feitos.append(ultimo)
+                if not cap.get("ja_existia"):
+                    baixados.append(ultimo)
                 if cap.get("pasta"):
                     pastas_feitas.append(Path(cap["pasta"]))
                 if self._fechar.is_set():
@@ -938,7 +1014,7 @@ class SessaoManual:
                 if not self.continuar_ativo:                                 # desligado (ou nunca ligado): termina aqui
                     self._registrar(
                         "Modo automático concluído." if len(feitos) == 1 else
-                        f"Continuação desligada: parei depois de {ultimo}. {len(feitos)} capítulo(s) baixado(s)."
+                        f"Continuação desligada: parei depois de {ultimo}. {len(baixados)} capítulo(s) baixado(s)."
                     )
                     return
                 self._registrar(f"Tentando avançar para o próximo capítulo (depois de {ultimo})…")
@@ -947,23 +1023,30 @@ class SessaoManual:
                     self.proximo_capitulo()
                 except RuntimeError as erro:
                     manter_aberto = True
-                    return self._parar_aviso(f"não consegui pedir o próximo capítulo ({erro}).", feitos, parou_em=ultimo)
+                    return self._parar_aviso(f"não consegui pedir o próximo capítulo ({erro}).", baixados, parou_em=ultimo)
                 estado = self._esperar_estado(("procurando",), 60)
                 if self._fechar.is_set():
                     return
                 resultado = self._resultado_proximo
+                tipo = self._proximo_tipo
+                if estado == "aguardando" and resultado and not resultado[0] and tipo == "fim":
+                    # a lista do site confirma: este era o último capítulo. Não é erro.
+                    manter_aberto = True
+                    texto = f"{resultado[1]} {len(baixados)} capítulo(s) baixado(s) nesta execução."
+                    self._registrar(texto)
+                    self._definir_aviso(texto)
+                    return self._traduzir_ao_final(pastas_feitas)
                 if estado != "aguardando" or not resultado or not resultado[0]:
                     manter_aberto = True
                     detalhe = resultado[1] if resultado else "o navegador não respondeu."
+                    sufixo = "Isso pode ser o último capítulo OU um erro; confira no navegador." if tipo in ("", "erro") else "Confira no navegador."
                     self._parar_aviso(
-                        f"não consegui avançar para o próximo capítulo depois de {ultimo}: {detalhe} "
-                        "Isso pode ser o último capítulo OU um erro; confira no navegador.", feitos, parou_em=ultimo,
+                        f"não consegui avançar para o próximo capítulo depois de {ultimo}: {detalhe} {sufixo}", baixados, parou_em=ultimo,
                     )
                     # fim da sequência: nada mais está sendo baixado, então a tradução pode começar
                     return self._traduzir_ao_final(pastas_feitas)
-                time.sleep(1.0)                                                # deixa o título da aba atualizar
             manter_aberto = True
-            self._parar_aviso(f"atingi o limite de {LIMITE_CAPITULOS_AUTO} capítulos numa execução.", feitos, parou_em=ultimo)
+            self._parar_aviso(f"atingi o limite de {LIMITE_CAPITULOS_AUTO} capítulos numa execução.", baixados, parou_em=ultimo)
         except Exception as erro:
             manter_aberto = self.continuar_ativo and not self._fechar.is_set()
             self._registrar(f"Modo automático parou: {erro}")
@@ -973,6 +1056,7 @@ class SessaoManual:
             with self._lock:
                 self.automatico_ativo = False
                 self.continuar_ativo = False
+            self._baixar_capas_pendentes()                  # a capa fica para o fim: não segura o download dos capítulos
             if not manter_aberto:
                 self.fechar_navegador()
 
@@ -1044,6 +1128,9 @@ class SessaoManual:
             self._capas.clear()
             self._capas_pedidas.clear()
             self._capas_tentadas.clear()
+            self._indices.clear()
+            self._html_serie.clear()
+            self._capas_para_o_fim.clear()
             self.colecao.limpar(reiniciar_numeracao=True)
             self.estado, self.erro = "ocioso", None
 
@@ -1255,47 +1342,199 @@ class SessaoManual:
                 self._capa(contexto, args)
             elif comando == "proximo":
                 self._proximo(contexto)
+            elif comando == "indice":
+                self._cmd_indice(contexto)
             elif comando == "procurar":
                 self._procurar(
                     capturador, contexto, respostas, rede, args["ignorar"], args["espera"], args.get("modo", "rapido"),
                 )
+            # título e endereço da aba valem DEPOIS do comando: quem identifica o capítulo não precisa esperar o próximo ciclo
+            self._ultima_acao_fim = time.monotonic()
+            self._atualizar_info(contexto, forcar=True)
 
-    def _proximo(self, contexto) -> None:
-        """Acha e aciona o controle de "próximo capítulo". Se a página mudar, a lista de imagens é zerada."""
+    def _titulo(self, pagina) -> str:
+        try:
+            return (pagina.title() or "")[:300]
+        except Exception:
+            return ""
+
+    def _status_da_pagina(self, pagina) -> int:
+        """Código HTTP da página aberta (0 se o navegador não informar)."""
+        try:
+            return int(pagina.evaluate("() => { const n = performance.getEntriesByType('navigation')[0]; return (n && n.responseStatus) || 0; }") or 0)
+        except Exception:
+            return 0
+
+    def _indice_guardado(self, url: str) -> Optional[cs.IndiceSite]:
+        """A lista de capítulos do site já lida (sem ir buscar nada): serve a quem não está na thread do navegador."""
+        from baixador.biblioteca import capa
+
+        guardado = self._indices.get(capa.url_da_obra(url) or url)
+        return guardado[1] if guardado else None
+
+    def _indice_do_site(self, contexto, pagina, url_capitulo: str, forcar: bool = False) -> Optional[cs.IndiceSite]:
+        """Lista de capítulos que o SITE publica: a página da obra (uma requisição, sem abrir aba) e, se ela não trouxer a lista, o
+        menu de capítulos da página aberta. Fica em cache por alguns minutos. Sem lista confiável devolve None/vazia e o
+        programa cai no botão "próximo", agora com conferência da chegada."""
+        from baixador.biblioteca import capa
+
+        modelo = cs.modelo_url(url_capitulo)
+        if modelo is None:
+            return None
+        obra = capa.url_da_obra(url_capitulo) or ""
+        chave = obra or url_capitulo
+        agora = time.monotonic()
+        guardado = self._indices.get(chave)
+        if guardado and not forcar and agora - guardado[0] < (VALIDADE_LISTA_S if guardado[1] and guardado[1].confiavel else 120.0):
+            return guardado[1]
+        indice: Optional[cs.IndiceSite] = None
+        if obra:
+            try:
+                bruto = buscar_pelo_contexto(contexto, obra, capa.LIMITE_PAGINA, self._timeout, referer=url_capitulo)
+                self._html_serie[obra] = bruto
+                indice = cs.IndiceSite(cs.itens_do_html(bruto.decode("utf-8", "replace"), obra, modelo), "página da obra", obra)
+            except Exception:
+                indice = None
+        if indice is None or not indice.confiavel:
+            try:
+                pares = pagina.evaluate(JS_LISTA_DA_PAGINA)
+                dom = cs.IndiceSite(cs.itens_de_pares(pares, pagina.url, modelo), "menu da página", obra)
+                indice = dom if indice is None else indice.unir(dom)
+            except Exception:
+                pass
+        self._indices[chave] = (agora, indice)
+        if indice is not None and indice.confiavel:
+            self._registrar(
+                f"Lista de capítulos do site lida ({indice.origem}): {len(indice)} capítulo(s), do {indice.menor.numero} ao {indice.maior.numero}."
+            )
+        elif forcar or guardado is None:
+            self._registrar("Não achei uma lista de capítulos do site; vou pelo botão “próximo” e conferir cada capítulo ao chegar.")
+        return indice
+
+    def _cmd_indice(self, contexto) -> None:
+        """Comando do automático: lê a lista de capítulos do site e descobre qual capítulo está aberto (antes de começar)."""
+        self._inicio_info = None
+        try:
+            pagina = self._pagina_ativa(contexto)
+            url = pagina.url
+            indice = self._indice_do_site(contexto, pagina, url, forcar=True)
+            self._inicio_info = {"indice": indice, "atual": cs.identificar_atual(url, self._titulo(pagina), cs.modelo_url(url), indice)}
+        except Exception:
+            self._inicio_info = None
+        finally:
+            self._ultima_acao_fim = time.monotonic()
+            self._atualizar_info(contexto, forcar=True)
+            with self._lock:
+                if self.estado == "procurando":
+                    self._definir("aguardando")
+
+    def _consultar_inicio(self) -> Optional[Dict[str, Any]]:
+        with self._lock:
+            if self.estado != "aguardando":
+                return None
+            self._cancelar.clear()
+            self._definir("procurando")
+        self._fila.put(("indice", {}))
+        self._esperar_estado(("procurando",), 60)
+        return self._inicio_info
+
+    def _voltar_para(self, pagina, url: str) -> None:
+        """Depois de uma passagem recusada, deixa o navegador no capítulo de onde saiu (não numa página 404 ou "em breve")."""
         from playwright.sync_api import Error as ErroPlaywright
 
         try:
+            if pagina.url != url:
+                pagina.goto(url, wait_until="domcontentloaded", timeout=TEMPO_ABERTURA_MS)
+        except ErroPlaywright:
+            pass
+
+    def _proximo(self, contexto) -> None:
+        """Passa para o capítulo seguinte SEM adivinhar: usa a lista de capítulos do site (quando existe), confere ao chegar que a
+        página é mesmo o capítulo esperado e nunca vai além do último. Se a página mudar, a lista de imagens é zerada."""
+        from playwright.sync_api import Error as ErroPlaywright
+
+        self._proximo_tipo = "erro"
+        try:
             pagina = self._pagina_ativa(contexto)
             antes = pagina.url
-            achado = pagina.evaluate(JS_PROXIMO)
-            if not achado:
-                return self._resultado(False, "Não encontrei o botão de próximo capítulo nesta página. Passe pelo navegador mesmo.")
-            href = achado.get("href") or ""
-            self._registrar(f"Controle encontrado: “{achado.get('texto') or href[:80]}”. Passando de capítulo…")
-            if href and not href.startswith(("http://", "https://")):
-                href = ""
-            if href and not mesmo_site(href, antes):
-                return self._resultado(False, "O botão leva para outro site; não segui (proteção contra anúncios).")
-            if achado.get("marcado"):
-                try:
-                    pagina.locator("[data-baixador-prox]").first.click(timeout=4000)
-                except ErroPlaywright:
-                    if href:                                   # clique barrado (sobreposição): vai direto ao endereço
-                        pagina.goto(href, wait_until="commit", timeout=TEMPO_ABERTURA_MS)
-            elif href:
-                pagina.goto(href, wait_until="commit", timeout=TEMPO_ABERTURA_MS)
-            fim = time.monotonic() + 10
-            while time.monotonic() < fim and pagina.url == antes and not self._fechar.is_set():
-                pagina.wait_for_timeout(200)
-            if pagina.url == antes:
-                return self._resultado(False, "Cliquei, mas a página não mudou. Pode ser o último capítulo ou o site pede outra ação.")
+            modelo = cs.modelo_url(antes)
+            indice = self._indice_do_site(contexto, pagina, antes)
+            atual = cs.identificar_atual(antes, self._titulo(pagina), modelo, indice)
+            if atual.aviso:
+                self._registrar(f"Atenção: {atual.aviso}")
+            decisao = cs.decidir_proximo(indice, atual)
+            if decisao.tipo in ("fim", "fora-da-lista"):          # antes de dizer "acabou", relê a lista (pode ter saído capítulo novo)
+                novo_indice = self._indice_do_site(contexto, pagina, antes, forcar=True)
+                if novo_indice is not indice:
+                    indice = novo_indice
+                    atual = cs.identificar_atual(antes, self._titulo(pagina), modelo, indice)
+                    decisao = cs.decidir_proximo(indice, atual)
+            if decisao.tipo in ("fim", "fora-da-lista"):
+                self._proximo_tipo = decisao.tipo
+                return self._resultado(False, decisao.mensagem)
+            if decisao.aviso:
+                self._registrar(f"Atenção: {decisao.aviso}")
+            destino, status = "", 0
+            if decisao.tipo == "lista" and decisao.item is not None:
+                destino = decisao.item.url
+                if not mesmo_site(destino, antes):
+                    return self._resultado(False, "A lista de capítulos aponta para outro site; não segui (proteção contra anúncios).")
+                self._registrar(f"Próximo na lista do site: capítulo {decisao.item.numero}. Abrindo…")
+                resposta = pagina.goto(destino, wait_until="commit", timeout=TEMPO_ABERTURA_MS)
+                status = int(resposta.status) if resposta is not None else 0
+            else:                                                 # sem lista confiável: procura o botão, mas confere a chegada
+                achado = pagina.evaluate(JS_PROXIMO)
+                if not achado:
+                    return self._resultado(False, "Não encontrei o botão de próximo capítulo nesta página. Passe pelo navegador mesmo.")
+                href = achado.get("href") or ""
+                self._registrar(f"Controle encontrado: “{achado.get('texto') or href[:80]}”. Passando de capítulo…")
+                if href and not href.startswith(("http://", "https://")):
+                    href = ""
+                if href and not mesmo_site(href, antes):
+                    return self._resultado(False, "O botão leva para outro site; não segui (proteção contra anúncios).")
+                destino = href
+                if achado.get("marcado"):
+                    try:
+                        pagina.locator("[data-baixador-prox]").first.click(timeout=4000)
+                    except ErroPlaywright:
+                        if href:                                   # clique barrado (sobreposição): vai direto ao endereço
+                            resposta = pagina.goto(href, wait_until="commit", timeout=TEMPO_ABERTURA_MS)
+                            status = int(resposta.status) if resposta is not None else 0
+                elif href:
+                    resposta = pagina.goto(href, wait_until="commit", timeout=TEMPO_ABERTURA_MS)
+                    status = int(resposta.status) if resposta is not None else 0
+                fim = time.monotonic() + 10
+                while time.monotonic() < fim and pagina.url == antes and not self._fechar.is_set():
+                    pagina.wait_for_timeout(100)
+                if pagina.url == antes:
+                    return self._resultado(False, "Cliquei, mas a página não mudou. Pode ser o último capítulo ou o site pede outra ação.")
             try:
                 pagina.wait_for_load_state("domcontentloaded", timeout=8000)
             except ErroPlaywright:
                 pass
+            status = status or self._status_da_pagina(pagina)
+            self._ultima_acao_fim = time.monotonic()
+            self._atualizar_info(contexto, forcar=True)
+            novo = cs.identificar_atual(pagina.url, self._titulo(pagina), modelo, indice)
+            from baixador.biblioteca import capa
+
+            raiz_site = "{0.scheme}://{0.netloc}/".format(urlsplit(antes))
+            ok, motivo = cs.validar_chegada(
+                atual.numero, destino, pagina.url, novo, indice, status, esperado=decisao.item if decisao.tipo == "lista" else None,
+                nao_capitulo=(capa.url_da_obra(antes) or "", raiz_site),
+            )
+            if not ok:
+                self._proximo_tipo = "invalido"
+                self._voltar_para(pagina, antes)
+                self._atualizar_info(contexto, forcar=True)
+                return self._resultado(False, f"Não avancei: {motivo} Voltei ao capítulo anterior.")
+            if novo.aviso:
+                self._registrar(f"Atenção: {novo.aviso}")
+            self._proximo_tipo = "ok"
             self.colecao.limpar(reiniciar_numeracao=True)
             self.pasta = None
-            self._resultado(True, f"Novo capítulo aberto: {pagina.url[:120]}. Lista de imagens zerada; clique em Procurar.")
+            rotulo = f"capítulo {novo.numero}" if novo.numero else "capítulo"
+            self._resultado(True, f"Novo capítulo aberto: {rotulo} ({pagina.url[:100]}). Lista de imagens zerada; clique em Procurar.")
         except ErroPlaywright as erro:
             self._resultado(False, f"Não consegui passar o capítulo ({_resumo(erro)}).")
         except Exception as erro:
@@ -1312,6 +1551,8 @@ class SessaoManual:
 
     def _atualizar_info_por_comando(self, espera_s: float = 2.5) -> None:
         """Espera o laço do navegador renovar o título da aba (a leitura só pode ser feita naquela thread)."""
+        if self._ultima_acao_fim and self._info_em >= self._ultima_acao_fim:
+            return                                           # a leitura já foi refeita depois do último comando: está fresca
         fim = time.monotonic() + espera_s
         antes = self._info_em
         while time.monotonic() < fim and self._info_em == antes and not self._fechar.is_set():
@@ -1344,7 +1585,7 @@ class SessaoManual:
         if tentativas >= 3 or time.monotonic() < quando:
             return
         self._capas_tentadas[obra] = (tentativas + 1, time.monotonic() + 30.0)
-        dados, motivo = capa.procurar(obra, lambda u, limite: buscar_pelo_contexto(contexto, u, limite, self._timeout, referer=obra))
+        dados, motivo = capa.procurar(obra, lambda u, limite: self._html_serie.get(u) or buscar_pelo_contexto(contexto, u, limite, self._timeout, referer=obra))
         if dados:
             self._capas[obra] = dados
             self._registrar("Capa da obra encontrada na página dela.")
@@ -1360,13 +1601,25 @@ class SessaoManual:
         if dados and capa.gravar(pasta_obra, dados):
             self._registrar("Capa da obra salva.")
         elif obra and capa.achar(pasta_obra) is None and obra not in self._capas_pedidas and self.estado in ESTADOS_ATIVOS:
+            if _capa_sem_resultado_recente(obra):
+                self._capas_pedidas.add(obra)                  # já tentei há pouco e não achei: não insiste a cada execução
+                return
             self._capas_pedidas.add(obra)                      # uma vez por obra
-            if self.automatico_ativo:                          # no automático o navegador fecha logo depois: espera a capa aqui
-                ok, mensagem = self.baixar_capa(Path(pasta_obra), obra, False, espera_s=60.0)
-                if not ok:
-                    self._registrar(f"Capa não baixada: {mensagem} Use “Baixar capa” na biblioteca.")
+            if self.automatico_ativo:                          # no automático a capa fica para DEPOIS do último capítulo (não atrasa o download)
+                self._capas_para_o_fim.append((Path(pasta_obra), obra))
             else:                                              # manual: não prende o “Baixar marcadas”; o resultado vai para o andamento
                 threading.Thread(target=self.baixar_capa, args=(Path(pasta_obra), obra, False, 60.0), daemon=True).start()
+
+    def _baixar_capas_pendentes(self) -> None:
+        """Capas das obras baixadas no automático, buscadas uma vez, no fim, com tempo limitado."""
+        pendentes, self._capas_para_o_fim = self._capas_para_o_fim, []
+        for pasta_obra, obra in pendentes:
+            if self._fechar.is_set() or not self.navegador_pronto():
+                return
+            ok, mensagem = self.baixar_capa(pasta_obra, obra, False, espera_s=25.0)
+            if not ok:
+                _marcar_capa_sem_resultado(obra)
+                self._registrar(f"Capa não baixada: {mensagem} Use “Baixar capa” na biblioteca.")
 
     def _pagina_ativa(self, contexto):
         from playwright.sync_api import Error as ErroPlaywright

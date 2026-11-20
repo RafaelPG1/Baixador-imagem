@@ -75,8 +75,8 @@ funciona no próprio notebook. `Ctrl+C` no PowerShell encerra. Opção `--sem-na
 3. **Busca** (padrão: **Rápida e adaptativa**, a antiga "opção C"): desce a página rápido e, se detecta carregamento,
    freia e espera. A alternativa **Cuidadosa** (a antiga "B") é mais lenta e mais conservadora. As duas conferem
    números pulados na sequência das imagens no final.
-4. **Passar para o próximo capítulo** clica no botão de próximo do site e zera a lista; número e nome se
-   atualizam sozinhos.
+4. **Passar para o próximo capítulo** vai ao capítulo seguinte **da lista de capítulos do próprio site** e zera a lista de
+   imagens; número e nome se atualizam sozinhos. Veja "Como o programa passa de capítulo" abaixo.
 5. **Limpar tudo** zera a operação atual (endereço, obra, número, nome, lista de imagens, andamento, última pasta). **Não
    apaga nada da biblioteca.** Se houver imagens encontradas e não salvas, ou o navegador estiver aberto, pede
    confirmação (e fecha o navegador); um endereço novo começa do zero, sem misturar com o anterior.
@@ -117,6 +117,22 @@ antigo. Números que faltam entre o primeiro e o último aparecem como "Faltam n
   Baixar imagens estiver livre, vai para ela, liga **sozinho o modo automático** (qualquer que seja o modo escolhido, sem precisar clicar em
   "Procurar páginas") abre o último capítulo salvo, **não o baixa de novo**, aperta em "próximo" sozinho e baixa só os capítulos novos (os já salvos são pulados). Se a aba estiver baixando,
   com o navegador aberto ou com imagens aguardando você, avisa para esperar (ou use "Limpar tudo").
+- **Como o programa passa de capítulo (sem pular nem inventar capítulo):**
+  - Primeiro lê a **lista de capítulos que o site publica** (página da obra e menu de capítulos da página), uma vez por obra, sem
+    abrir aba. Com a lista, o próximo capítulo é o **seguinte da lista** (não o que um botão diz), e o programa **para** no último
+    capítulo do site, avisando "Já está atualizado: o último capítulo do site é o N". Isso não é erro.
+  - O capítulo aberto é identificado pela **lista do site e pelo endereço**, antes do título da aba (que, em muitos sites, ainda mostra
+    o capítulo anterior por um instante). Quando o título e o endereço discordam, o registro avisa e vale o endereço.
+  - Se o capítulo aberto **não consta na lista** (ex.: está aberto o 56, mas o site só tem até o 55), o programa **não avança**
+    e diz isso. Também não conta como "baixado" o capítulo de partida da atualização nem os que já existiam.
+  - Ao chegar, confere a página: resposta 404, volta para a página da obra ou outro capítulo que não o esperado são **recusados** (o
+    navegador volta ao capítulo anterior e nada é salvo). Sem lista no site, usa o botão "próximo", mas só aceita se o novo capítulo
+    for o seguinte (no máximo 1 acima): um botão que pularia um capítulo é recusado e você é avisado.
+  - Se o site não numera os capítulos (nem no endereço, nem no título), não dá para conferir o número; vale a conferência das imagens.
+- **Velocidade:** além de não esperar à toa entre capítulos, o programa não bloqueia mais o download esperando a capa (ela é buscada
+  uma vez, no fim, com tempo limitado; se não for achada, só tenta de novo depois de uma semana) e a biblioteca guarda o que já leu
+  (as imagens de cada capítulo só são reabertas quando a pasta muda), o que faz diferença em bibliotecas com dezenas de milhares de
+  arquivos.
 - **Navegador fechado na janela**: o programa reconhece, volta para "fechado", limpa os dados daquela aba e deixa abrir
   outro site na hora (sem precisar de F5 nem reiniciar o programa).
 - **Obra que você já tem**: ao abrir um capítulo, o programa compara o endereço da obra (`obra.json`) e o nome
@@ -348,7 +364,7 @@ baixador-imagens\
 ```
 
 `web\compartilhado\qrcode.js` é a biblioteca `qrcode-generator` (Kazuhiko Arase, licença MIT), incluída localmente.
-Testes: `python -m unittest discover -s tests -v` (Python; os de integração usam o Node e um Ollama de mentira) e `cd tradutor; npm test` (Node).
+Testes: `python -m unittest discover -s tests -v` (Python; os de integração usam o Node e um Ollama de mentira; `test_navegacao_site` usa um navegador de verdade, sem janela, contra um site local falso, e é ignorado se não houver navegador) e `cd tradutor; npm test` (Node).
 
 
 ## Pasta da biblioteca
