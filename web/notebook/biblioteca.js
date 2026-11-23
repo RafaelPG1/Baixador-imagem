@@ -5,8 +5,8 @@ const corDe = (o) => String(o.cor);
 const urlCapa = (o) => rota('/api/capa', `&p=${encodeURIComponent(o.pasta)}&v=${o.capa_v}`);
 function urlDaObra(nome) { const p = new URLSearchParams(location.search); if (nome) p.set('obra', nome); else p.delete('obra'); return `${location.pathname}?${p}#biblioteca`; }
 let modoSel = null;                                  // seleção de capítulos para retraduzir/exportar: {tipo, sel:Set}
-function abrirObra(nome) { obraAberta = nome; escolhido = null; modoSel = null; history.pushState(null, '', urlDaObra(nome)); desenhar(); window.scrollTo(0, 0); }
-window.addEventListener('popstate', () => { obraAberta = new URLSearchParams(location.search).get('obra'); escolhido = null; modoSel = null; desenhar(); });
+function abrirObra(nome) { obraAberta = nome; escolhido = null; modoSel = null; filtroCap = ''; history.pushState(null, '', urlDaObra(nome)); desenhar(); window.scrollTo(0, 0); }
+window.addEventListener('popstate', () => { obraAberta = new URLSearchParams(location.search).get('obra'); escolhido = null; modoSel = null; filtroCap = ''; desenhar(); });
 
 function el(tag, classe, texto) { const e = document.createElement(tag); if (classe) e.className = classe; if (texto != null) e.textContent = texto; return e; }
 function botao(texto, classe, aoClicar) { const b = el('button', 'btn ' + (classe || ''), texto); b.type = 'button'; b.addEventListener('click', aoClicar); return b; }
@@ -21,10 +21,11 @@ async function acao(caminho, corpo, ok) {
 
 function lerCapitulo(c) { window.open(urlLeitor(c.rel), '_blank', 'noopener'); }
 function lerObra(o) {
-  // 1º) o capítulo que você selecionou nesta obra; 2º) o último já liberado (traduzido); 3º) o último baixado.
+  // 1º) o capítulo que você selecionou nesta obra; 2º) o primeiro liberado (traduzido) ainda não lido; 3º) o último liberado; 4º) o último baixado.
   const sel = escolhido && o.capitulos.find((c) => c.rel === escolhido);
   const liberados = o.capitulos.filter((c) => c.traduzido);
-  lerCapitulo(sel || (liberados.length ? liberados : o.capitulos).slice(-1)[0]);
+  const proximo = liberados.find((c) => !c.lido);                               // 2º) o primeiro liberado que você ainda não leu
+  lerCapitulo(sel || proximo || (liberados.length ? liberados : o.capitulos).slice(-1)[0]);
 }
 
 /* ---------- ícones (um só traço) e menus ---------- */
@@ -74,7 +75,7 @@ ligarMenu($('bib-tr-btn'), $('bib-tr-painel'));
 ligarMenu($('bib-mais-btn'), $('bib-mais-painel'));
 
 /* ---------- capítulo: lista (trilho de estações) e painel lateral ---------- */
-let filtro = '', maisNovoPrimeiro = true, fila = {}, ultimoPainel = '';
+let filtro = '', filtroCap = '', maisNovoPrimeiro = true, fila = {}, ultimoPainel = '';
 const norm = (t) => String(t || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
 const numCap = (c) => { const n = parseFloat(c.numero); return Number.isFinite(n) && String(c.numero).trim() !== '' ? n : null; };
 function agrupar(nums) {
@@ -103,20 +104,30 @@ function fecharDetalhe() {
 }
 function focarPainel() { const h = $('bib-detalhe').querySelector('h3'); if (h) h.focus({preventScroll: true}); }
 
-function elegivelSel(c) { return modoSel && (modoSel.tipo === 'exportar' || c.traduzido); }       // exportar vale para qualquer capítulo
+function elegivelSel(c) { return modoSel && (modoSel.tipo === 'exportar' || modoSel.tipo === 'excluir' || c.traduzido); }       // exportar vale para qualquer capítulo
 function baixarExportacao(params) {
   const a = document.createElement('a'); a.href = rota('/api/exportar', params); a.download = ''; document.body.append(a); a.click(); a.remove();
   aviso('Preparando o arquivo do app… o download começa em instantes (pode demorar com muitas imagens).');
 }
+function nomeCap(c) { return c.numero != null && c.numero !== '' ? 'Cap. ' + c.numero : c.rotulo; }
+async function excluirCapitulos(o, caps) {
+  const lista = caps.map(nomeCap), mostra = lista.length > 40 ? lista.slice(0, 40).join(', ') + ` … e mais ${lista.length - 40}` : lista.join(', ');
+  const trad = caps.filter((c) => c.traduzido).length;
+  if (!confirm(`Excluir ${caps.length === 1 ? 'este capítulo' : caps.length + ' capítulos'} de “${o.nome}”?\n\n${mostra}\n\nAs imagens${trad ? ' e as traduções' : ''} ${caps.length === 1 ? 'dele' : 'deles'} serão apagadas do disco. Os outros capítulos e a obra ficam. Isto não pode ser desfeito.`)) return;
+  const r = await acao('/api/biblioteca/capitulos/excluir', {obra: o.nome, rels: caps.map((c) => c.rel)}, (x) => `${x.apagados.length} capítulo(s) excluído(s).` + (x.erros.length ? ` Falhou: ${x.erros.join('; ')}` : ''));
+  if (r) { modoSel = null; escolhido = null; ultimoPainel = ''; carregar(); }
+}
+
 function desenharBarraSelecao(o, elegiveis) {
-  const re = modoSel.tipo === 'retraduzir', ex = modoSel.tipo === 'exportar';
+  const re = modoSel.tipo === 'retraduzir', ex = modoSel.tipo === 'exportar', del = modoSel.tipo === 'excluir';
   const barra = el('div', 'bib-selecao');
   const n = modoSel.sel.size;
   barra.append(el('span', 'nota num', `${n} de ${elegiveis.length} selecionado${n === 1 ? '' : 's'}`));
   const todos = botao(n === elegiveis.length ? 'Limpar' : 'Selecionar todos', 'pequeno', () => { modoSel.sel = n === elegiveis.length ? new Set() : new Set(elegiveis.map((c) => c.rel)); desenhar(); });
-  const ok = botao(`${re ? 'Retraduzir' : 'Exportar'} ${n || ''}`.trim(), 'principal pequeno', async () => {
+  const ok = botao(`${del ? 'Excluir' : re ? 'Retraduzir' : 'Exportar'} ${n || ''}`.trim(), 'principal pequeno', async () => {
     if (!n) return;
     const rels = [...modoSel.sel];
+    if (del) { await excluirCapitulos(o, o.capitulos.filter((c) => modoSel.sel.has(c.rel))); return; }
     if (ex) { modoSel = null; baixarExportacao(rels.map((r) => '&rel=' + encodeURIComponent(r)).join('')); desenhar(); return; }
     if (!confirm(`Retraduzir ${n} capítulo(s) de “${o.nome}”?\n\nCada tradução atual só é substituída quando a nova terminar; se a nova falhar ou for cancelada, a atual continua valendo.`)) return;
     modoSel = null;
@@ -125,6 +136,22 @@ function desenharBarraSelecao(o, elegiveis) {
   ok.disabled = !n;
   const cancela = botao('Cancelar', 'pequeno', () => { modoSel = null; desenhar(); });
   barra.append(todos, ok, cancela);
+  if (del) {                                                       // marca um intervalo pelo número do capítulo (existentes entre os dois; sem número ficam de fora)
+    const campo = (id, rot, chave) => { const i = el('input'); i.type = 'text'; i.id = id; i.inputMode = 'decimal'; i.maxLength = 7; i.value = modoSel[chave] || ''; i.setAttribute('aria-label', rot); i.placeholder = rot;
+      i.addEventListener('input', () => { modoSel[chave] = i.value; }); i.addEventListener('keydown', (e) => { if (e.key === 'Enter') marcar(); }); return i; };
+    const marcar = () => {
+      const v = (t) => parseFloat(String(t || '').replace(',', '.'));
+      const de = v(modoSel.de), ate = modoSel.ate ? v(modoSel.ate) : de;                    // só o inicial = um capítulo
+      if (!Number.isFinite(de) || !Number.isFinite(ate)) { aviso('Informe o número inicial (e o final, se for um intervalo).'); return; }
+      if (de > ate) { aviso('O número inicial é maior que o final.'); return; }
+      const achados = o.capitulos.filter((c) => { const x = numCap(c); return x !== null && x >= de && x <= ate; });
+      if (!achados.length) { aviso(`Nenhum capítulo entre ${de} e ${ate}.`); return; }
+      achados.forEach((c) => modoSel.sel.add(c.rel)); desenhar();
+    };
+    const faixa = el('div', 'bib-intervalo');
+    faixa.append(el('span', 'nota', 'Intervalo: do cap.'), campo('bib-sel-de', 'inicial', 'de'), el('span', 'nota', 'ao'), campo('bib-sel-ate', 'final (opcional)', 'ate'), botao('Marcar', 'pequeno', marcar));
+    barra.append(faixa);
+  }
   return barra;
 }
 
@@ -132,7 +159,9 @@ function desenharLista(o) {
   const sec = el('section', 'bib-lista'); sec.dataset.cor = corDe(o);
   const cab = el('div', 'bib-lista-cab'); cab.append(el('h3', '', 'Capítulos'));
   const ordem = botao(maisNovoPrimeiro ? 'Mais novos primeiro' : 'Mais antigos primeiro', 'bib-ordem', () => { maisNovoPrimeiro = !maisNovoPrimeiro; desenhar(); });
-  ordem.classList.remove('btn'); cab.append(ordem);
+  ordem.classList.remove('btn');
+  let ulRef = null;
+  cab.append(Diagrama.campoBusca(filtroCap, (v) => { filtroCap = v; if (ulRef) Diagrama.filtrar(ulRef, v); }), ordem);
   const elegiveis = o.capitulos.filter((c) => elegivelSel(c));
   const barraSel = modoSel ? desenharBarraSelecao(o, elegiveis) : null;
   const itens = o.capitulos.map((c, i) => ({tipo: 'cap', c, i, n: numCap(c)}));
@@ -143,13 +172,14 @@ function desenharLista(o) {
     const li = el('li', 'bib-est');
     if (it.tipo === 'falta') { li.classList.add('falta'); li.textContent = 'Faltam na biblioteca: ' + it.g; ul.append(li); return; }
     const c = it.c, est = estadoDoCapitulo(c), temNum = c.numero != null && c.numero !== '';
-    li.classList.add('t-' + est.linha); if (escolhido === c.rel) li.classList.add('sel');
+    li._cap = c; li.classList.add('t-' + est.linha); if (c.lido) li.classList.add('lido'); if (escolhido === c.rel) li.classList.add('sel');
     const b = el('button', 'cap-item' + (escolhido === c.rel ? ' atual' : '')); b.type = 'button'; b.dataset.rel = c.rel;
     b.setAttribute('aria-pressed', String(escolhido === c.rel));
     const l1 = el('span', 'cap-l1'); l1.append(el('span', 'cap-num', temNum ? 'Cap. ' + c.numero : c.rotulo));
     if (c.titulo && temNum) l1.append(el('span', 'cap-sep', '·'), el('span', 'cap-titulo', c.titulo));
     const l2 = el('span', 'cap-l2'); const estado = el('span', 'cap-estado ' + est.classe, est.t);
     l2.append(`${c.imagens} ${c.imagens === 1 ? 'imagem' : 'imagens'} · `, estado);
+    if (c.lido) l2.append(' · ', el('span', 'cap-estado lido', 'Lido'));
     if (modoSel) {
       const marcado = modoSel.sel.has(c.rel);
       l1.prepend(el('span', 'cap-check', elegivelSel(c) ? (marcado ? '☑' : '☐') : '—'));
@@ -166,6 +196,7 @@ function desenharLista(o) {
     if (!modoSel) { const ler = comIcone('ler', 'Ler', 'pequeno'); ler.title = `Ler ${c.rotulo}`; ler.addEventListener('click', () => lerCapitulo(c)); acoes.append(ler); }
     li.append(b, acoes); ul.append(li);
   });
+  ulRef = ul; if (filtroCap.trim()) Diagrama.filtrar(ul, filtroCap);
   sec.append(cab); if (barraSel) sec.append(barraSel); sec.append(ul);
   return sec;
 }
@@ -176,7 +207,7 @@ function desenharDetalhe() {
   $('pg-biblioteca').classList.toggle('com-painel', !!achado);
   if (!achado) { box.hidden = true; box.replaceChildren(); ultimoPainel = ''; return; }
   const {obra, cap} = achado;
-  const chave = [cap.rel, cap.traduzido, cap.incompleta, cap.revisar, cap.imagens, cap.numero, cap.titulo, obra.nome].join('|');
+  const chave = [cap.rel, cap.lido, cap.traduzido, cap.incompleta, cap.revisar, cap.imagens, cap.numero, cap.titulo, obra.nome].join('|');
   if (chave === ultimoPainel && !box.hidden) return;                       // nada mudou: não refaz (não perde o que está sendo digitado)
   ultimoPainel = chave;
   box.hidden = false; box.dataset.cor = corDe(obra);
@@ -195,6 +226,8 @@ function desenharDetalhe() {
     traduzir({rel: cap.rel});
   });
   principais.append(trad);
+  const lidoB = botao(cap.lido ? 'Marcar como não lido' : 'Marcar como lido', 'largo', async () => { if (await acao('/api/lidos', {rel: cap.rel, lido: !cap.lido})) carregar(); });
+  principais.append(lidoB);
 
   const gTrad = el('div', 'bib-grupo'); gTrad.append(el('h4', '', 'Tradução'));
   const linhaT = el('div', 'bib-linha-acoes');
@@ -238,7 +271,8 @@ function desenharDetalhe() {
 
   const gArq = el('div', 'bib-grupo'); gArq.append(el('h4', '', 'Arquivos'));
   const pasta = comIcone('pasta', 'Abrir pasta do capítulo', ''); pasta.addEventListener('click', () => acao('/api/biblioteca/abrir-pasta', {rel: cap.rel}));
-  gArq.append(pasta);
+  const exCap = comIcone('lixo', 'Excluir este capítulo', 'perigo'); exCap.addEventListener('click', () => excluirCapitulos(obra, [cap]));
+  gArq.append(pasta, exCap);
 
   box.replaceChildren(cab, principais, gTrad, gOrg, gArq);
   box.scrollTop = 0;
@@ -300,6 +334,7 @@ function desenharObra(o) {
     const r = await acao('/api/traducao/excluir', {obra: o.nome}, (x) => `${x.traducoes} tradução(ões) excluída(s).`);
     if (r) carregar();
   }));
+  if (o.capitulos.length) pn.append(itemMenu('lixo', 'Excluir capítulos…', 'perigo', () => { escolhido = null; modoSel = {tipo: 'excluir', sel: new Set(), de: '', ate: ''}; desenhar(); }));
   if (o.pasta) {
     pn.append(el('hr'));
     pn.append(itemMenu('lixo', 'Excluir obra', 'perigo', async () => {
@@ -327,10 +362,16 @@ function cartaoObra(o) {
   return b;
 }
 
+/* o redesenho recria o DOM: guarda e devolve a rolagem da ficha e da lista de capítulos */
+function rolagens() { return ['.bib-ficha', '.bib-trilho'].map((q) => { const e = document.querySelector(q); return e ? e.scrollTop : 0; }); }
+function devolverRolagens(r) { ['.bib-ficha', '.bib-trilho'].forEach((q, i) => { const e = document.querySelector(q); if (e && r[i]) e.scrollTop = r[i]; }); }
+
 function desenhar() {
   const obra = obraAberta && bib.obras.find((o) => o.nome === obraAberta);
   const caixa = $('bib-linhas');
   const focoRel = document.activeElement && document.activeElement.dataset && document.activeElement.dataset.rel;
+  const rol = rolagens();
+  const focoId = document.activeElement && /^bib-(busca-cap|sel-)/.test(document.activeElement.id) ? document.activeElement.id : '';
   $('bib-conta').textContent = bib.obras.length ? (obra ? '' : `${bib.obras.length} obra${bib.obras.length === 1 ? '' : 's'}`) : '';
   $('bib-filtro').closest('.bib-busca').hidden = !!obra || !bib.obras.length;
   if (!bib.obras.length) {
@@ -344,6 +385,8 @@ function desenhar() {
     caixa.className = visiveis.length ? 'capas' : 'linhas';
     caixa.replaceChildren(...(visiveis.length ? visiveis.map(cartaoObra) : [el('p', 'bib-vazio-filtro', `Nenhuma obra com “${filtro}”.`)]));
   }
+  devolverRolagens(rol);
+  if (focoId) { const i = $(focoId); if (i) { i.focus({preventScroll: true}); i.setSelectionRange(i.value.length, i.value.length); } }
   desenharDetalhe();
   if (focoRel) { const b = document.querySelector(`.cap-item[data-rel="${CSS.escape(focoRel)}"]`); if (b) b.focus({preventScroll: true}); }
 }
@@ -447,6 +490,9 @@ $('excluir-tudo').addEventListener('click', async () => {
   if (r) { obraAberta = null; escolhido = null; history.replaceState(null, '', urlDaObra(null)); carregar(); }
 });
 $('abrir-saida').addEventListener('click', () => acao('/api/biblioteca/abrir-pasta', {}));
+
+/* o leitor abre em outra aba e marca "lido" no servidor (isso não muda a "versão" da biblioteca): ao voltar para esta aba, recarrega */
+document.addEventListener('visibilitychange', () => { if (!document.hidden && !$('pg-biblioteca').hidden) carregar(); });
 
 /* ---- sincronização: a cada 3 s confere a "versão" da biblioteca; só recarrega se mudou */
 async function vigiar() {

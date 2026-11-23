@@ -29,7 +29,7 @@ from urllib.parse import parse_qs, quote, unquote, urlsplit
 from baixador.biblioteca import acervo as biblioteca
 from baixador.traducao import config, executor, legado
 from baixador.navegador import navegadores
-from baixador.biblioteca import capa as capa_obra, estrutura, exportar, obra as dados_obra, organizacao
+from baixador.biblioteca import capa as capa_obra, estrutura, exportar, lidos, obra as dados_obra, organizacao
 from baixador.servidor.base import (
     CSS, ESTATICOS_LEITOR, ESTATICOS_VERIFICACAO, JS, ServidorSilencioso, ler_capa, ler_web, pagina_leitor,
 )
@@ -39,9 +39,9 @@ from baixador.servidor.atualizacao import Atualizador
 from baixador.nucleo.erros import ErroBaixador
 from baixador.configuracao import ARQUIVO_CELULAR, DADOS, PASTA_PADRAO, RAIZ, migrar_dados_antigos, migrar_pasta_biblioteca
 from baixador.nucleo.imagens import pasta_do_conjunto
-from baixador.biblioteca.capitulo import dados_do_capitulo, listar_imagens
+from baixador.biblioteca.capitulo import dados_do_capitulo, listar_imagens, pasta_do_capitulo
 from baixador.navegador.manual import ESTADOS_ATIVOS, SessaoManual
-from baixador.traducao.executor import TarefaTraducao
+from baixador.traducao.executor import ErroTraducao, TarefaTraducao
 
 PAGINA = "notebook/app.html"
 ESTATICOS = {
@@ -370,6 +370,13 @@ class Manipulador(BaseHTTPRequestHandler):
         raiz: Path = self.server.raiz  # type: ignore[attr-defined]
         caminho = partes.path
 
+        if caminho == "/api/lidos":                            # marca/desmarca um capítulo como lido
+            rel = dados.get("rel")
+            if not isinstance(rel, str) or pasta_do_capitulo(raiz, rel) is None:
+                return self._negar(400, "Capítulo inválido.")
+            lidos.marcar(rel.strip("/\\").replace("\\", "/"), bool(dados.get("lido", True)))
+            return self._json(200, {"ok": True})
+
         if caminho == "/api/traduzir":
             return self._traduzir(dados)
 
@@ -415,6 +422,23 @@ class Manipulador(BaseHTTPRequestHandler):
                 return self._negar(409, "Esse capítulo não está mais na fila (ou use Cancelar para parar tudo).")
             return self._json(200, {"ok": True, "onde": r})
 
+        if caminho == "/api/traducao/tentar-novamente":        # refaz o que terminou cancelado ou com erro (um capítulo ou todos)
+            try:
+                n = self.server.traducao.tentar_novamente(str(dados.get("rel") or "")[:300])  # type: ignore[attr-defined]
+            except ErroTraducao as erro:
+                return self._negar(404, str(erro))
+            except RuntimeError as erro:
+                return self._negar(409, str(erro))
+            return self._json(200, {"ok": True, "capitulos": n})
+
+        if caminho == "/api/traducao/limpar":                  # tira da lista (só da lista) os cancelados e/ou traduzidos
+            estados = dados.get("estados")
+            try:
+                n = self.server.traducao.limpar_registros(estados if isinstance(estados, list) else [])  # type: ignore[attr-defined]
+            except ErroTraducao as erro:
+                return self._negar(400, str(erro))
+            return self._json(200, {"ok": True, "removidos": n})
+
         if caminho == "/api/traducao/abrir-leitor":
             return self._abrir_leitor(self.server.traducao.pasta)  # type: ignore[attr-defined]
 
@@ -453,6 +477,20 @@ class Manipulador(BaseHTTPRequestHandler):
                 return self._negar(422, str(erro))
             except OSError as erro:
                 return self._negar(500, f"Não foi possível apagar tudo: {erro}")
+            return self._json(200, {"ok": True, **r})
+
+        if caminho == "/api/biblioteca/capitulos/excluir":            # só os capítulos escolhidos de uma obra
+            if self.server.traducao.estado == "executando":  # type: ignore[attr-defined]
+                return self._negar(409, "Há uma tradução em andamento. Espere terminar ou cancele antes de excluir.")
+            if manual.salvando:
+                return self._negar(409, "Há imagens sendo salvas agora. Espere terminar antes de excluir.")
+            rels = dados.get("rels")
+            if not isinstance(rels, list) or len(rels) > 5000:
+                return self._negar(400, "Escolha os capítulos.")
+            try:
+                r = biblioteca.excluir_capitulos(raiz, str(dados.get("obra", ""))[:120], [str(x)[:300] for x in rels])
+            except ErroBaixador as erro:
+                return self._negar(422, str(erro))
             return self._json(200, {"ok": True, **r})
 
         if caminho == "/api/biblioteca/excluir-tudo":

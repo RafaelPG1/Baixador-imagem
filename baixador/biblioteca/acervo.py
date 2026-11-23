@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlsplit
 
-from baixador.biblioteca import capa, obra as dados_obra, organizacao as org
+from baixador.biblioteca import capa, lidos, obra as dados_obra, organizacao as org
 from baixador.nucleo.erros import ErroBaixador
 from baixador.biblioteca.capitulo import NOME_IMG, NOME_TRADUCAO, _varrer
 
@@ -42,7 +42,7 @@ def _faltando(numeros: List[str]) -> List[int]:
 def _ultima_url(raiz: Path, caps: List[Dict[str, Any]]) -> str:
     """Endereço (do `capitulo.json`) do capítulo mais novo que tem um: de onde o botão "Atualizar" parte."""
     for c in reversed(caps):                                   # `caps` está em ordem crescente
-        url = str(org.ler_meta(raiz / c["rel"]).get("url", "")) if not c["antigo"] else ""
+        url = str(org.ler_meta(raiz / c["rel"], copiar=False).get("url", "")) if not c["antigo"] else ""
         if url.startswith(("http://", "https://")):
             return url
     return ""
@@ -57,6 +57,7 @@ def listar(raiz: Path) -> Dict[str, Any]:
         g["capitulos"].append(c)
         g["quando"] = max(g["quando"], c["quando"])
     obras = []
+    ja_lidos = lidos.todos()
     for g in sorted(grupos.values(), key=lambda x: -x["quando"]):
         g["capitulos"].sort(key=lambda c: org.chave_ordem(c["numero"], c["titulo"]))
         caps = [
@@ -64,7 +65,7 @@ def listar(raiz: Path) -> Dict[str, Any]:
                 "rel": c["rel"], "numero": c["numero"], "titulo": c["titulo"],
                 "rotulo": org.rotulo_capitulo(c["numero"], c["titulo"]) if c["numero"] is not None or not c["antigo"] else c["rel"],
                 "imagens": len(c["nomes"]), "traduzido": c["traduzido"], "incompleta": c["incompleta"], "revisar": c["revisar"], "antigo": c["antigo"],
-                "capa": c["nomes"][0], "quando": c["quando"],
+                "capa": c["nomes"][0], "quando": c["quando"], "lido": c["rel"] in ja_lidos,
             }
             for c in g["capitulos"]
         ]
@@ -182,6 +183,7 @@ def reorganizar_capitulo(raiz: Path, rel: str, obra: str, numero: Any, titulo: s
                 pass
     antigo = org.ler_meta(destino)
     org.gravar_meta(destino, obra, num, titulo, str(antigo.get("url", "")))
+    lidos.mover(rel, novo_rel)
     esquecer_versao()
     return novo_rel
 
@@ -319,6 +321,7 @@ def renomear_obra(raiz: Path, antiga: str, nova: str) -> int:
                 provisoria = pasta.with_name(f".renomeando-{os.getpid()}-{pasta.name}")
                 os.rename(pasta, provisoria)                                    # também serve para trocar só maiúsculas no Windows
                 os.rename(provisoria, destino)
+                lidos.mover(pasta.name, nova)                                   # o histórico de leitura acompanha a pasta
             for sub in _subpastas(destino):
                 meta = org.ler_meta(sub)
                 if meta or _tem_imagens(sub):
@@ -419,6 +422,43 @@ def excluir_obra(raiz: Path, nome: str) -> Dict[str, Any]:
             _apagar_arvore(pai)
     esquecer_versao()
     return {"capitulos": len(caps), "pastas": sorted({c["rel"] for c in caps})}
+
+
+def excluir_capitulos(raiz: Path, obra: str, rels: List[str]) -> Dict[str, Any]:
+    """Apaga do disco só os capítulos pedidos (imagens, tradução e dados de cada um) de UMA obra.
+
+    Valida tudo antes de apagar qualquer coisa: cada `rel` precisa ser um capítulo existente desta obra, dentro da biblioteca.
+    Não toca nos outros capítulos, na capa, no `obra.json` nem em outras obras (a pasta da obra fica mesmo sem capítulos).
+    Devolve {"apagados": [rel...], "erros": [mensagem...]}.
+    """
+    raiz = Path(raiz)
+    chave = org._chave(obra or "")
+    if not chave:
+        raise ErroBaixador("Informe a obra.")
+    pedidos = list(dict.fromkeys(str(r).strip("/\\").replace("\\", "/") for r in rels if str(r).strip("/\\")))
+    if not pedidos:
+        raise ErroBaixador("Escolha ao menos um capítulo.")
+    da_obra = {c["rel"]: c for c in _varrer(raiz) if org._chave(c["obra"] or "Sem obra") == chave}
+    ausentes = [r for r in pedidos if r not in da_obra]
+    if ausentes:
+        raise ErroBaixador(f"Capítulo não encontrado nesta obra: {ausentes[0]}. Nada foi apagado.")
+    alvos = [da_obra[r] for r in pedidos]
+    for c in alvos:
+        if not _dentro(raiz, c["pasta"]) or c["pasta"].is_symlink():
+            raise ErroBaixador("Uma das pastas está fora da biblioteca. Nada foi apagado.")
+        if c["antigo"] and any(listar_imagens_em(sub) for sub in _subpastas(c["pasta"])):
+            raise ErroBaixador(f"A pasta “{c['rel']}” também guarda outros capítulos em subpastas. Nada foi apagado.")
+    apagados: List[str] = []
+    erros: List[str] = []
+    for c in alvos:
+        try:
+            _apagar_arvore(c["pasta"])
+            apagados.append(c["rel"])
+        except OSError as erro:
+            erros.append(f"{c['rel']}: {erro}")
+    lidos.esquecer(apagados)
+    esquecer_versao()
+    return {"apagados": apagados, "erros": erros}
 
 
 def listar_imagens_em(pasta: Path) -> List[str]:

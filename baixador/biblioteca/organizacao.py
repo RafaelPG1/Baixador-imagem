@@ -266,16 +266,18 @@ def _ler_meta_do_disco(arquivo: Path) -> Dict[str, Any]:
         return {}
 
 
-def ler_meta(pasta: Path) -> Dict[str, Any]:
-    """Dados do `capitulo.json` de uma pasta ({} se não houver). Guardado em cache até o arquivo mudar; quem recebe pode alterar a cópia."""
+def ler_meta(pasta: Path, copiar: bool = True) -> Dict[str, Any]:
+    """Dados do `capitulo.json` de uma pasta ({} se não houver). Guardado em cache até o arquivo mudar; quem recebe pode alterar a cópia.
+    `copiar=False` devolve o próprio dado do cache: só para quem apenas lê (não altere o resultado)."""
     arquivo = Path(pasta) / NOME_META
-    return copy.deepcopy(_CACHE_META.obter(arquivo, lambda: _ler_meta_do_disco(arquivo)))
+    dados = _CACHE_META.obter(arquivo, lambda: _ler_meta_do_disco(arquivo))
+    return copy.deepcopy(dados) if copiar else dados
 
 
 def descrever_capitulo(pasta: Path, obra_da_pasta: Optional[str] = None) -> Dict[str, Any]:
     """obra / número / nome de uma pasta de capítulo: do `capitulo.json`, ou deduzidos do nome da pasta."""
     pasta = Path(pasta)
-    meta = ler_meta(pasta)
+    meta = ler_meta(pasta, copiar=False)                   # só leitura
     numero = normalizar_numero(meta.get("numero")) if meta else None
     titulo = limpar_nome(meta.get("titulo", "")) if meta else ""
     obra = limpar_nome(meta.get("obra", ""), 80) if meta else ""

@@ -138,11 +138,20 @@
   barra.addEventListener('pointerleave', function (e) { if (!arrastando && e.pointerType === 'mouse' && !barra.classList.contains('aberta')) esconderNumero(); });
   // selecionada fica assim até tocar em outro lugar
   document.addEventListener('pointerdown', function (e) { if (barra.classList.contains('aberta') && !barra.contains(e.target)) desselecionar(); }, true);
+  // Chegar ao fim do capítulo (rolando de verdade, não só abrir uma página curta) marca como lido.
+  // Notebook: no servidor (a porta muda a cada abertura, o LocalStorage seria perdido). Celular: LocalStorage (porta fixa).
+  var marcado = false;
+  function marcarLido() {
+    if (marcado || !relCanonico) return; marcado = true;
+    if (tok) fetch(api('/api/lidos'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rel: relCanonico, lido: true }) }).catch(function () { marcado = false; });
+    else { try { localStorage.setItem('lido:' + relCanonico, '1'); } catch (_) {} }
+  }
   function atualizarProgresso() {
     var total = figuras.length; if (!total) return;
     var p = 1;
     if (window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 2) p = total;   // chegou ao fim
     else { var meio = window.innerHeight * 0.4; for (var j = 0; j < total; j++) { if (figuras[j].getBoundingClientRect().top <= meio) p = j + 1; else break; } }
+    if (p === total && window.scrollY > 0) marcarLido();
     if (p === paginaAtual) return;
     paginaAtual = p;
     if (barra.classList.contains('aberta') && !arrastando) mostrarNumero(quadrados[p - 1]);

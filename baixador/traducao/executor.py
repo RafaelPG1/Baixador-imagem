@@ -188,19 +188,23 @@ class TarefaTraducao:
         self.fim = 0.0
         self.modo = ""                  # motor escolhido ao iniciar; mudar a configuração depois só vale na próxima
         self.avisos: List[str] = []
+        self._cfg: Dict[str, Any] = {}  # configuração da última tarefa (motor/modelo): a nova tentativa reaproveita
+        self._pastas: List[Path] = []   # pasta de cada item de `itens` (mesmo índice)
+        self._fechada = True            # a fila já terminou de ser percorrida: não aceita mais itens
 
     # -- início
     def iniciar(self, pasta: Path) -> None:
         self.iniciar_lote([pasta])
 
-    def iniciar_lote(self, pastas: List[Path], *_ignorados: Any, **__ignorados: Any) -> None:
-        """Traduz os capítulos em sequência. Quem chama escolheu traduzir estes capítulos, então eles são refeitos do zero."""
+    def iniciar_lote(self, pastas: List[Path], *_ignorados: Any, cfg: Optional[Dict[str, Any]] = None, **__ignorados: Any) -> None:
+        """Traduz os capítulos em sequência. Quem chama escolheu traduzir estes capítulos, então eles são refeitos do zero.
+        `cfg`: motor/modelo a usar (padrão: a configuração atual); a nova tentativa passa a da tarefa original."""
         if not pastas:
             raise ErroTraducao("Nenhum conjunto para traduzir.")
         with self._lock:
             if self.estado == "executando":
                 raise RuntimeError("Já existe uma tradução em andamento.")
-            cfg = config.ler()
+            cfg = dict(cfg) if cfg else config.ler()
             self.estado, self.log, self.feitas, self.total = "executando", [], 0, ESCALA
             self.modo, self.avisos = cfg["motor"], []
             self.prontos, self.capitulos = 0, len(pastas)
@@ -211,8 +215,9 @@ class TarefaTraducao:
             ]
             self.inicio, self.fim = time.time(), 0.0
             self.erro, self.resumo, self.pasta = None, None, lista[0]
+            self._cfg, self._pastas, self._fechada = cfg, lista, False
             self._parar, self._parar_item, self._pulados = threading.Event(), threading.Event(), set()
-            self._thread = threading.Thread(target=self._rodar, args=(lista, cfg), daemon=True)
+            self._thread = threading.Thread(target=self._rodar, args=(lista, cfg), daemon=True)   # `lista` é a mesma de `_pastas`: pode crescer
             self._thread.start()
 
     @staticmethod
@@ -242,6 +247,59 @@ class TarefaTraducao:
                     return "andamento"
         return ""
 
+    def tentar_novamente(self, rel: str = "") -> int:
+        """Refaz os capítulos da tarefa que terminaram cancelados ou com erro (só o `rel`, se informado). Devolve quantos.
+
+        Reaproveita a pasta de cada item e o motor/modelo da tarefa original. Com uma tradução em andamento, os capítulos
+        entram no fim da fila dela (nada que está rodando é interrompido); sem tradução em andamento, começa uma nova só com eles.
+        Um capítulo que já está na fila ou sendo traduzido nunca entra duas vezes."""
+        with self._lock:
+            ativos = {it["rel"] for it in self.itens if it["estado"] in ("fila", "traduzindo")}
+            novos: List[Tuple[int, Path]] = []
+            for k, it in enumerate(self.itens):
+                if it["estado"] not in ("cancelado", "falhou") or it.get("oculto") or (rel and it["rel"] != rel):
+                    continue
+                if it["rel"] in ativos or not self._pastas[k].is_dir():
+                    continue
+                ativos.add(it["rel"])
+                novos.append((k, self._pastas[k]))
+            if not novos:
+                raise ErroTraducao("Não há capítulo cancelado ou com erro para tentar de novo.")
+            if self.estado == "executando":
+                if self._fechada or self._parar.is_set():
+                    raise RuntimeError("A tradução está terminando ou sendo cancelada. Tente de novo em instantes.")
+                for k, pasta in novos:
+                    if self.itens[k]["estado"] == "cancelado":
+                        self.capitulos += 1                        # o cancelamento tinha tirado este capítulo da conta
+                    self.itens[k]["estado"] = "refeito"            # fica no histórico, mas não volta a ser oferecido
+                    self.itens.append({"nome": self._nome_item(pasta), "rel": self.itens[k]["rel"], "estado": "fila", "etapa": "", "feitas": 0, "total": ESCALA})
+                    self._pastas.append(pasta)
+                return len(novos)
+            cfg, pastas = dict(self._cfg), [p for _, p in novos]
+        self.iniciar_lote(pastas, cfg=cfg)                          # outra tarefa pode ter começado agora: levanta RuntimeError (409)
+        return len(pastas)
+
+    def limpar_registros(self, estados: Any) -> int:
+        """Tira da lista os registros já encerrados em `estados` ("cancelado", "pronto"). Devolve quantos.
+
+        Só esconde registros: nenhum arquivo é tocado, e itens na fila, em andamento ou com erro nunca saem. Os itens ficam
+        na memória (marcados `oculto`) para não deslocar os índices que a tarefa em andamento usa; a tarefa já terminada, sem
+        mais nada para mostrar, volta ao estado "ocioso"."""
+        validos = {"cancelado", "pronto"} & set(estados or [])
+        if not validos:
+            raise ErroTraducao("Escolha o que limpar: cancelados ou traduzidos.")
+        with self._lock:
+            n = 0
+            for it in self.itens:
+                if it["estado"] in validos and not it.get("oculto"):
+                    it["oculto"] = True
+                    n += 1
+            if self.estado != "executando" and all(it.get("oculto") or it["estado"] == "refeito" for it in self.itens):
+                self.itens, self._pastas = [], []
+                self.estado, self.erro, self.resumo = "ocioso", None, None
+                self.feitas = self.total = self.prontos = self.capitulos = 0
+            return n
+
     # -- andamento
     def _registrar(self, mensagem: str) -> None:
         with self._lock:
@@ -257,18 +315,19 @@ class TarefaTraducao:
 
     def _atualizar_global(self, indice: int, fracao: float) -> None:
         with self._lock:
-            ativos = [i for i in self.itens if i["estado"] != "cancelado"]
+            ativos = [i for i in self.itens if i["estado"] not in ("cancelado", "refeito")]
             if not ativos:
                 return
             soma = 0.0
             for k, it in enumerate(self.itens):
-                if it["estado"] == "cancelado":
+                if it["estado"] in ("cancelado", "refeito"):
                     continue
                 soma += 1.0 if it["estado"] in ("pronto", "falhou") else (fracao if k == indice else it["feitas"] / ESCALA)
             self.feitas = int(ESCALA * soma / len(ativos))
 
     def _encerrar_fila(self, pendente: str) -> None:
         with self._lock:
+            self._fechada = True
             for it in self.itens:
                 if it["estado"] in ("fila", "traduzindo"):
                     it["estado"] = pendente
@@ -294,7 +353,14 @@ class TarefaTraducao:
                 raise ErroTraducao(d["mensagem"])
             env = ambiente_do_node(cfg)
             self._registrar(f"Motor: {config.MOTORES[cfg['motor']]} ({IDIOMAS}).")
-            for indice, pasta in enumerate(pastas):
+            indice = -1
+            while True:
+                with self._lock:
+                    indice += 1
+                    if indice >= len(pastas):                      # a lista pode crescer (nova tentativa): fecha sob a trava
+                        self._fechada = True
+                        break
+                pasta = pastas[indice]
                 if self._parar.is_set():
                     raise ErroTraducao("Tradução cancelada.")
                 with self._lock:
@@ -320,6 +386,7 @@ class TarefaTraducao:
                     if dados.get("abortar"):
                         raise _AbortarFila(dados["mensagem"])
                     continue
+                falhas[:] = [f for f in falhas if f["imagem"] != pasta.name]     # tentou de novo e deu certo: não é mais falha
                 self._item(indice, estado="pronto", etapa="", feitas=ESCALA)
                 self._atualizar_global(indice, 1.0)
                 self._liberar(pasta)
@@ -430,7 +497,7 @@ class TarefaTraducao:
                 "log": self.log[desde_log:], "log_total": len(self.log), "resumo": self.resumo,
                 "prontos": self.prontos, "capitulos": self.capitulos, "modo": self.modo,
                 "cancelando": self.estado == "executando" and self._parar.is_set(), "avisos": list(self.avisos),
-                "itens": [dict(i) for i in self.itens], "inicio": self.inicio, "fim": self.fim, "agora": time.time(),
+                "itens": [dict(i) for i in self.itens if not i.get("oculto")], "inicio": self.inicio, "fim": self.fim, "agora": time.time(),
                 "dependencias": disponibilidade(),
             }
 

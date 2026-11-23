@@ -10,22 +10,23 @@ function aviso(t) { const x = $('toast'); x.textContent = t; x.hidden = false; c
 
 const urlCapa = (o) => `/api/capa?p=${encodeURIComponent(o.pasta)}&v=${o.capa_v}`;
 function urlDaObra(nome) { return nome ? '/?obra=' + encodeURIComponent(nome) : '/'; }
-function abrirObra(nome) { obraAberta = nome; history.pushState(null, '', urlDaObra(nome)); desenhar(); window.scrollTo(0, 0); }
-window.addEventListener('popstate', () => { obraAberta = new URLSearchParams(location.search).get('obra'); desenhar(); });
+function abrirObra(nome) { obraAberta = nome; filtroCap = ''; history.pushState(null, '', urlDaObra(nome)); desenhar(); window.scrollTo(0, 0); }
+window.addEventListener('popstate', () => { obraAberta = new URLSearchParams(location.search).get('obra'); filtroCap = ''; desenhar(); });
+const jaLido = (rel) => lido('lido:' + rel) === '1';
 function abrir(o, c) { guardar('ultimo:' + o.nome, c.rel); location.href = urlCap(c.rel); }
 function continuar(o) {
   const rel = lido('ultimo:' + o.nome);
   const atual = o.capitulos.find((c) => c.rel === rel);
   if (!atual) return o.capitulos[0];
   const i = o.capitulos.indexOf(atual);
-  return o.capitulos[i];
+  return jaLido(atual.rel) && o.capitulos[i + 1] ? o.capitulos[i + 1] : atual;     // terminou o último que abriu: segue para o próximo da lista (pula números que faltam)
 }
 
 const ICO = {ler: '<path d="M4 5a2 2 0 0 1 2-2h12v16H6a2 2 0 0 0-2 2z"/><path d="M4 19V5"/>', voltar: '<path d="m15 18-6-6 6-6"/>'};
 const ic = (n) => `<svg class="ic" viewBox="0 0 24 24" aria-hidden="true">${ICO[n]}</svg>`;
 const norm = (t) => (t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
 const corDe = (o) => String(o.cor == null ? 0 : o.cor);
-let filtro = '', maisNovoPrimeiro = lido('ordem') !== 'antigos';
+let filtro = '', filtroCap = '', maisNovoPrimeiro = lido('ordem') !== 'antigos';
 function numCap(c) { const n = parseFloat(c.numero); return Number.isFinite(n) && String(c.numero).trim() !== '' ? n : null; }
 function agrupar(faltando) {
   const r = []; let ini = null, fim = null;
@@ -71,7 +72,8 @@ function desenharObra(o) {
   const cab = el('div', 'bib-lista-cab'); cab.append(el('h3', '', 'Capítulos'));
   const ordem = el('button', 'bib-ordem', maisNovoPrimeiro ? 'Mais novos primeiro' : 'Mais antigos primeiro'); ordem.type = 'button';
   ordem.addEventListener('click', () => { maisNovoPrimeiro = !maisNovoPrimeiro; guardar('ordem', maisNovoPrimeiro ? 'novos' : 'antigos'); desenhar(); });
-  cab.append(ordem);
+  let ulRef = null;
+  cab.append(Diagrama.campoBusca(filtroCap, (v) => { filtroCap = v; if (ulRef) Diagrama.filtrar(ulRef, v); }), ordem);
   const itens = o.capitulos.map((c, i) => ({tipo: 'cap', c, i, n: numCap(c)}));
   agrupar(o.faltando).forEach((g) => itens.push({tipo: 'falta', g, n: parseFloat(g)}));
   itens.sort((x, y) => (((y.n !== null && x.n !== null) ? y.n - x.n : 0) || ((y.i || 0) - (x.i || 0))) * (maisNovoPrimeiro ? 1 : -1));
@@ -80,23 +82,32 @@ function desenharObra(o) {
     const li = el('li', 'bib-est');
     if (it.tipo === 'falta') { li.classList.add('falta'); li.textContent = 'Faltam na biblioteca: ' + it.g; ul.append(li); return; }
     const c = it.c, temNum = c.numero != null && c.numero !== '';
+    li._cap = c; if (jaLido(c.rel)) li.classList.add('lido');
     li.classList.add(c.traduzido ? 't-pronto' : 't-pend'); if (ultimo === c.rel) li.classList.add('sel');
     const b = el('button', 'cap-item'); b.type = 'button'; b.dataset.rel = c.rel;
     const l1 = el('span', 'cap-l1'); l1.append(el('span', 'cap-num', temNum ? 'Cap. ' + c.numero : c.rotulo));
     if (c.titulo && temNum) l1.append(el('span', 'cap-sep', '·'), el('span', 'cap-titulo', c.titulo));
     const l2 = el('span', 'cap-l2'); l2.append(`${c.imagens} imagem${c.imagens === 1 ? '' : 's'} · `, el('span', 'cap-estado ' + (c.traduzido ? (c.incompleta ? 'aviso' : 'ok') : ''), c.traduzido ? (c.incompleta ? `Incompleto · ${c.incompleta} sem tradução` : 'Traduzido') : 'Sem tradução'));
-    if (ultimo === c.rel) l2.append(' · ', el('span', 'cap-estado ativo', 'Parou aqui'));
+    if (jaLido(c.rel)) l2.append(' · ', el('span', 'cap-estado lido', 'Lido'));
+    if (ultimo === c.rel && !jaLido(c.rel)) l2.append(' · ', el('span', 'cap-estado ativo', 'Parou aqui'));
     b.append(l1, l2); b.addEventListener('click', () => abrir(o, c));
     li.append(b); ul.append(li);
   });
+  ulRef = ul; if (filtroCap.trim()) Diagrama.filtrar(ul, filtroCap);
   lista.append(cab, ul);
   raiz.append(ficha, lista);
   return raiz;
 }
 
+/* o redesenho recria o DOM: guarda e devolve a rolagem da ficha e da lista de capítulos */
+function rolagens() { return ['.bib-ficha', '.bib-trilho'].map((q) => { const e = document.querySelector(q); return e ? e.scrollTop : 0; }); }
+function devolverRolagens(r) { ['.bib-ficha', '.bib-trilho'].forEach((q, i) => { const e = document.querySelector(q); if (e && r[i]) e.scrollTop = r[i]; }); }
+
 function desenhar() {
   const obra = obraAberta && dados.obras.find((o) => o.nome === obraAberta);
   const caixa = $('linhas');
+  const rol = rolagens();
+  const focoBusca = document.activeElement && document.activeElement.id === 'bib-busca-cap';
   $('bib-conta').textContent = dados.obras.length && !obra ? `${dados.obras.length} obra${dados.obras.length === 1 ? '' : 's'}` : '';
   $('bib-barra').hidden = !!obra || !dados.obras.length;
   if (!dados.obras.length) {
@@ -109,6 +120,8 @@ function desenhar() {
     caixa.className = visiveis.length ? 'capas' : 'linhas';
     caixa.replaceChildren(...(visiveis.length ? visiveis.map(cartaoObra) : [el('p', 'bib-vazio-filtro', `Nenhuma obra com “${filtro}”.`)]));
   }
+  devolverRolagens(rol);
+  if (focoBusca) { const i = $('bib-busca-cap'); if (i) { i.focus({preventScroll: true}); i.setSelectionRange(i.value.length, i.value.length); } }
 }
 $('bib-filtro').addEventListener('input', () => { filtro = $('bib-filtro').value.trim(); desenhar(); });
 

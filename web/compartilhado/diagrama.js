@@ -96,5 +96,37 @@
     return b;
   }
 
-  window.Diagrama = {paginaObra, resumo, cartao};
+  // Busca de capítulos: número ("12" acha 12, 12.5, 120…) ou palavras do nome/título (sem acento e sem diferenciar maiúsculas).
+  const norm = (t) => String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  function combina(c, consulta) {
+    const q = norm(consulta).trim().replace(/^cap(itulo|\.)?\s*/, '').replace(',', '.');
+    if (!q) return true;
+    if (/^\d+(\.\d*)?$/.test(q)) return String(c.numero == null ? '' : c.numero).startsWith(q);
+    const texto = norm(`${c.rotulo} ${c.titulo} ${c.numero == null ? '' : 'cap ' + c.numero}`);
+    return q.split(/\s+/).every((p) => texto.includes(p));
+  }
+  // Campo de busca da lista; `aoMudar(texto)` a cada tecla. Esc limpa.
+  function campoBusca(valor, aoMudar) {
+    const l = document.createElement('label'); l.className = 'bib-busca bib-busca-cap';
+    l.innerHTML = '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>';
+    const i = document.createElement('input'); i.type = 'search'; i.id = 'bib-busca-cap'; i.value = valor || ''; i.autocomplete = 'off'; i.spellcheck = false;
+    i.placeholder = 'Buscar capítulo'; i.setAttribute('aria-label', 'Buscar capítulo por número ou nome');
+    i.addEventListener('input', () => aoMudar(i.value));
+    i.addEventListener('keydown', (e) => { if (e.key === 'Escape' && i.value) { i.value = ''; aoMudar(''); e.stopPropagation(); } });
+    l.append(i); return l;
+  }
+  // Mostra só os itens (<li> com `._cap`) que combinam; trechos "faltam" somem durante a busca. Itens só são escondidos, nunca refeitos.
+  function filtrar(ul, consulta) {
+    let vazio = ul.querySelector('.bib-sem-resultado'), achou = 0;
+    if (!vazio) { vazio = document.createElement('li'); vazio.className = 'bib-sem-resultado'; vazio.textContent = 'Nenhum capítulo encontrado.'; vazio.hidden = true; ul.append(vazio); }
+    const q = consulta.trim();
+    for (const li of ul.children) {
+      if (li === vazio) continue;
+      const ok = !q || (li._cap && combina(li._cap, q));
+      li.hidden = !ok; if (ok) achou++;
+    }
+    vazio.hidden = !q || achou > 0;
+  }
+
+  window.Diagrama = {paginaObra, resumo, cartao, campoBusca, filtrar, combina};
 })();

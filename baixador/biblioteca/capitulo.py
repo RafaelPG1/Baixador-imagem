@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import re
+import stat
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -34,7 +36,10 @@ def pasta_imagens(pasta: Path) -> Path:
     """Onde estão as imagens do capítulo: `pasta/img` (padrão) ou, em pastas antigas ainda não migradas, a própria pasta."""
     pasta = Path(pasta)
     sub = pasta / NOME_IMG
-    return sub if sub.is_dir() and not sub.is_symlink() else pasta
+    try:
+        return sub if stat.S_ISDIR(os.lstat(sub).st_mode) else pasta     # lstat: link simbólico não conta como pasta
+    except OSError:
+        return pasta
 
 
 _CACHE_IMAGENS = CachePorData(maximo=20000)
@@ -54,16 +59,17 @@ def listar_imagens(pasta: Path) -> List[str]:
 def _ler_imagens(destino: Path) -> List[str]:
     nomes: List[str] = []
     try:
-        entradas = list(destino.iterdir())
+        with os.scandir(destino) as it:
+            entradas = list(it)
     except OSError:
         return []
     for entrada in entradas:
-        if entrada.suffix.lower() not in EXTENSOES or entrada.is_symlink():
+        if os.path.splitext(entrada.name)[1].lower() not in EXTENSOES:
             continue
         try:
-            if not entrada.is_file():
+            if not entrada.is_file(follow_symlinks=False):          # também recusa link simbólico
                 continue
-            with open(entrada, "rb") as arquivo:
+            with open(entrada.path, "rb") as arquivo:
                 cabecalho = arquivo.read(32)
             detectar_formato(cabecalho)
         except Exception:
@@ -75,7 +81,8 @@ def _ler_imagens(destino: Path) -> List[str]:
 
 def _subpastas(pasta: Path) -> List[Path]:
     try:
-        return sorted(p for p in pasta.iterdir() if p.is_dir() and not p.is_symlink() and not p.name.startswith(".") and p.name != NOME_IMG)
+        with os.scandir(pasta) as it:
+            return sorted(Path(e.path) for e in it if e.is_dir(follow_symlinks=False) and not e.name.startswith(".") and e.name != NOME_IMG)
     except OSError:
         return []
 

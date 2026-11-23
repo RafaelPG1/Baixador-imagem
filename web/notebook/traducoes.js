@@ -6,8 +6,13 @@
   const visivel = () => !$('pg-traducoes').hidden;
 
   function desenhar(e) {
-    const ativo = e.estado === 'executando', itens = e.itens || [];
+    const ativo = e.estado === 'executando', todos = e.itens || [], itens = todos.filter((i) => i.estado !== 'refeito');   // 'refeito': já voltou para a fila
     const algo = ativo || itens.length > 0;
+    const refazer = itens.filter((i) => i.rel && (i.estado === 'cancelado' || i.estado === 'falhou')).length;
+    for (const [id, estado, rot] of [['tr-limpar-cancelados', 'cancelado', 'Limpar cancelados'], ['tr-limpar-prontos', 'pronto', 'Limpar traduzidos']]) {
+      const q = itens.filter((i) => i.estado === estado).length; $(id).hidden = !q; $(id).textContent = `${rot} (${q})`;
+    }
+    $('tr-retentar').hidden = !refazer; $('tr-retentar').textContent = refazer > 1 ? `Tentar de novo (${refazer})` : 'Tentar de novo';
     $('aba-trad-ponto').hidden = !ativo;
     $('tr-vazio').hidden = algo; $('tr-painel').hidden = !algo;
     $('tr-cancelar').hidden = !ativo; $('tr-cancelar').disabled = !!e.cancelando;
@@ -48,6 +53,12 @@
         x.addEventListener('click', async () => { await acao('/api/traducao/cancelar-item', {rel: i.rel}, (r) => (r.onde === 'fila' ? 'Capítulo tirado da fila.' : 'Cancelando este capítulo…')); sondar(); });
         li.append(x);
       }
+      if (i.rel && (i.estado === 'cancelado' || i.estado === 'falhou')) {
+        const x = document.createElement('button'); x.type = 'button'; x.className = 'btn pequeno'; x.textContent = 'Tentar de novo';
+        x.title = 'Refaz só este capítulo, com o mesmo motor da tradução original';
+        x.addEventListener('click', () => retentar(i.rel));
+        li.append(x);
+      }
       if (i.estado === 'traduzindo' && i.total) { const m = document.createElement('div'); m.className = 'mini'; const b = document.createElement('div'); b.style.width = Math.floor((i.feitas || 0) / i.total * 100) + '%'; m.append(b); li.append(m); }
       if (i.estado === 'falhou' && i.motivo) { const x = document.createElement('span'); x.className = 'motivo'; x.textContent = i.motivo; li.append(x); }
       return li;
@@ -56,6 +67,20 @@
     $('tr-resumo').textContent = r ? `Resultado: ${r.falas} fala(s) em ${r.capitulos} capítulo(s)` + (r.revisar ? ` · ${r.revisar} a revisar` : '') + (r.erros ? ` · ${r.erros} com erro` : '') + (r.falhas && r.falhas.length ? ` · ${r.falhas.length} capítulo(s) com falha` : '') + '.' : '';
     if (e.log && e.log.length) { anexarLog($('tr-log'), e.log); cursorLog = e.log_total; }
   }
+
+  async function retentar(rel) {
+    try { const r = await chamar('/api/traducao/tentar-novamente', rel ? {rel} : {}); aviso(`${r.capitulos} capítulo(s) na fila de novo.`); document.dispatchEvent(new CustomEvent('traducao-iniciada')); }
+    catch (e) { aviso(e.message); }
+    sondar();
+  }
+  $('tr-retentar').addEventListener('click', () => retentar(''));
+  async function limpar(estado) {                                  // só tira da lista; nenhum arquivo é apagado
+    try { const r = await chamar('/api/traducao/limpar', {estados: [estado]}); aviso(`${r.removidos} registro(s) tirado(s) da lista. Os arquivos continuam na biblioteca.`); }
+    catch (e) { aviso(e.message); }
+    sondar();
+  }
+  $('tr-limpar-cancelados').addEventListener('click', () => limpar('cancelado'));
+  $('tr-limpar-prontos').addEventListener('click', () => limpar('pronto'));
 
   async function sondar() {
     clearTimeout(pendente);
