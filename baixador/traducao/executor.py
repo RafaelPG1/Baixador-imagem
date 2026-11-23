@@ -182,7 +182,9 @@ class TarefaTraducao:
         self.erro: Optional[str] = None
         self.resumo: Optional[Dict[str, Any]] = None
         self.prontos = 0                # capítulos do lote já traduzidos, salvos e liberados para leitura
+        self.aguardando = 0             # motor "web": capítulos com os textos prontos, esperando a tradução importada
         self.capitulos = 0              # capítulos do lote
+        self._guardados: List[Dict[str, Any]] = []      # "aguardando" de lotes anteriores (motor web): continuam na lista até serem aplicados
         self.itens: List[Dict[str, Any]] = []   # fila mostrada na aba Traduções: {nome, rel, estado, etapa, feitas, total}
         self.inicio = 0.0
         self.fim = 0.0
@@ -193,8 +195,8 @@ class TarefaTraducao:
         self._fechada = True            # a fila já terminou de ser percorrida: não aceita mais itens
 
     # -- início
-    def iniciar(self, pasta: Path) -> None:
-        self.iniciar_lote([pasta])
+    def iniciar(self, pasta: Path, cfg: Optional[Dict[str, Any]] = None) -> None:
+        self.iniciar_lote([pasta], cfg=cfg)
 
     def iniciar_lote(self, pastas: List[Path], *_ignorados: Any, cfg: Optional[Dict[str, Any]] = None, **__ignorados: Any) -> None:
         """Traduz os capítulos em sequência. Quem chama escolheu traduzir estes capítulos, então eles são refeitos do zero.
@@ -205,9 +207,13 @@ class TarefaTraducao:
             if self.estado == "executando":
                 raise RuntimeError("Já existe uma tradução em andamento.")
             cfg = dict(cfg) if cfg else config.ler()
+            novos = {f"{Path(p).parent.name}/{Path(p).name}" for p in pastas}
+            atuais = {it["rel"] for it in self.itens if not it.get("oculto")}
+            antigos = {it["rel"]: it for it in [*(g for g in self._guardados if g["rel"] not in atuais), *self.itens] if it["estado"] == "aguardando" and not it.get("oculto") and it["rel"] not in novos}
+            self._guardados = [dict(it) for it in antigos.values()]    # preparar outro capítulo não pode esconder os já preparados
             self.estado, self.log, self.feitas, self.total = "executando", [], 0, ESCALA
             self.modo, self.avisos = cfg["motor"], []
-            self.prontos, self.capitulos = 0, len(pastas)
+            self.prontos, self.capitulos, self.aguardando = 0, len(pastas), 0
             lista = [Path(p) for p in pastas]
             self.itens = [
                 {"nome": self._nome_item(p), "rel": f"{p.parent.name}/{p.name}", "estado": "fila", "etapa": "", "feitas": 0, "total": ESCALA}
@@ -219,6 +225,21 @@ class TarefaTraducao:
             self._parar, self._parar_item, self._pulados = threading.Event(), threading.Event(), set()
             self._thread = threading.Thread(target=self._rodar, args=(lista, cfg), daemon=True)   # `lista` é a mesma de `_pastas`: pode crescer
             self._thread.start()
+
+    def iniciar_ou_enfileirar_web(self, pastas: List[Path]) -> int:
+        """Motor web: capítulos com todas as traduções importadas. Sem tarefa rodando, começa uma; com uma preparação web em andamento,
+        entram no fim da fila dela (sem repetir quem já está lá). Com outro motor rodando, levanta RuntimeError: o motor errado não pode pegá-los."""
+        with self._lock:
+            if self.estado == "executando" and self._cfg.get("motor") == "web" and not self._fechada and not self._parar.is_set():
+                ativos = {it["rel"] for it in self.itens if it["estado"] in ("fila", "traduzindo")}
+                novos = [Path(p) for p in pastas if f"{Path(p).parent.name}/{Path(p).name}" not in ativos]
+                for p in novos:
+                    self.itens.append({"nome": self._nome_item(p), "rel": f"{p.parent.name}/{p.name}", "estado": "fila", "etapa": "", "feitas": 0, "total": ESCALA})
+                    self._pastas.append(p)
+                    self.capitulos += 1
+                return len(pastas)
+        self.iniciar_lote(pastas, cfg={**config.ler(), "motor": "web"})
+        return len(pastas)
 
     @staticmethod
     def _nome_item(pasta: Path) -> str:
@@ -322,7 +343,7 @@ class TarefaTraducao:
             for k, it in enumerate(self.itens):
                 if it["estado"] in ("cancelado", "refeito"):
                     continue
-                soma += 1.0 if it["estado"] in ("pronto", "falhou") else (fracao if k == indice else it["feitas"] / ESCALA)
+                soma += 1.0 if it["estado"] in ("pronto", "falhou", "aguardando") else (fracao if k == indice else it["feitas"] / ESCALA)
             self.feitas = int(ESCALA * soma / len(ativos))
 
     def _encerrar_fila(self, pendente: str) -> None:
@@ -379,6 +400,14 @@ class TarefaTraducao:
                         self.capitulos = max(0, self.capitulos - 1)
                     self._parar_item.clear()
                     continue
+                if desfecho == "aguardando":                       # motor "web": textos prontos, a tradução vem de fora
+                    self._registrar(f"{pasta.name}: {dados.get('textos', 0)} texto(s) prontos para levar à IA na web ({dados.get('importadas', 0)} já importados).")
+                    self._item(indice, estado="aguardando", etapa="", feitas=ESCALA)
+                    with self._lock:
+                        self.aguardando += 1
+                        self.capitulos = max(0, self.capitulos - 1)       # não conta como "pronto para ler"
+                    self._atualizar_global(indice, 1.0)
+                    continue
                 if desfecho == "falhou":
                     self._registrar(f"{pasta.name}: {dados['mensagem']}")
                     falhas.append({"imagem": pasta.name, "motivo": dados["mensagem"]})
@@ -394,13 +423,14 @@ class TarefaTraducao:
                 falas += int(dados.get("falas") or 0)
                 revisar += int(c.get("revisar") or 0)
                 erros += int(c.get("erro") or 0)
-            if falhas and self.prontos == 0:                       # nenhum capítulo ficou pronto: isso é erro, não "concluído"
+            if falhas and self.prontos == 0 and not self.aguardando:                       # nenhum capítulo ficou pronto: isso é erro, não "concluído"
                 raise ErroTraducao(falhas[0]["motivo"] if len(falhas) == 1 else f"Nenhum capítulo foi traduzido. {falhas[0]['motivo']}")
             self._encerrar_fila("cancelado")
             with self._lock:
                 self.estado, self.feitas = "concluido", ESCALA
-                self.resumo = {"capitulos": self.prontos, "falas": falas, "revisar": revisar, "erros": erros, "falhas": falhas}
-            self._registrar(f"Concluído: {falas} fala(s) em {self.prontos} capítulo(s); {revisar} para revisar, {erros} com erro.")
+                self.resumo = {"capitulos": self.prontos, "falas": falas, "revisar": revisar, "erros": erros, "falhas": falhas, "aguardando": self.aguardando}
+            self._registrar(f"Concluído: {falas} fala(s) em {self.prontos} capítulo(s); {revisar} para revisar, {erros} com erro."
+                            + (f" {self.aguardando} capítulo(s) esperam a tradução da IA na web." if self.aguardando else ""))
         except _AbortarFila as erro:
             self._encerrar_fila("cancelado")
             with self._lock:
@@ -439,6 +469,7 @@ class TarefaTraducao:
 
         threading.Thread(target=vigiar, daemon=True).start()
         pronto: Dict[str, Any] = {}
+        aguardando: Optional[Dict[str, Any]] = None
         erro_evento: Optional[Dict[str, Any]] = None
         ultimas: Deque[str] = deque(maxlen=8)
         try:
@@ -456,6 +487,8 @@ class TarefaTraducao:
                     continue
                 if ev.get("evento") == "pronto":
                     pronto = ev
+                elif ev.get("evento") == "aguardando":
+                    aguardando = ev
                 elif ev.get("evento") == "erro":
                     erro_evento = ev
                 self._evento(indice, ev, fracoes)
@@ -469,6 +502,8 @@ class TarefaTraducao:
                 proc.stdout.close()
         if self._parar.is_set() or self._parar_item.is_set():
             return "cancelado", {}
+        if proc.returncode == 0 and aguardando is not None and erro_evento is None:
+            return "aguardando", aguardando
         if proc.returncode == 0 and (pronto or erro_evento is None):
             return "pronto", pronto
         mensagem = (erro_evento or {}).get("mensagem") or (ultimas[-1] if ultimas else f"O tradutor terminou com erro (código {proc.returncode}).")
@@ -495,9 +530,9 @@ class TarefaTraducao:
             return {
                 "estado": self.estado, "erro": self.erro, "feitas": self.feitas, "total": self.total,
                 "log": self.log[desde_log:], "log_total": len(self.log), "resumo": self.resumo,
-                "prontos": self.prontos, "capitulos": self.capitulos, "modo": self.modo,
+                "prontos": self.prontos, "capitulos": self.capitulos, "aguardando": self.aguardando, "modo": self.modo,
                 "cancelando": self.estado == "executando" and self._parar.is_set(), "avisos": list(self.avisos),
-                "itens": [dict(i) for i in self.itens if not i.get("oculto")], "inicio": self.inicio, "fim": self.fim, "agora": time.time(),
+                "itens": [dict(i) for i in self.itens if not i.get("oculto")] + [dict(i) for i in self._guardados if not any(i["rel"] == j["rel"] and not j.get("oculto") for j in self.itens)], "inicio": self.inicio, "fim": self.fim, "agora": time.time(),
                 "dependencias": disponibilidade(),
             }
 

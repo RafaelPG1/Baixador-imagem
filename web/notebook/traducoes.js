@@ -1,7 +1,7 @@
 /* Aba Traduções: acompanha a tradução em andamento (a mesma tarefa usada pela Biblioteca e pelo "Traduzir automaticamente"). */
 (() => {
   let cursorLog = 0, rodando = false, vistoInicio = 0, pendente = null;
-  const ROTULO = {fila: 'Na fila', traduzindo: 'Traduzindo…', pronto: 'Pronto', falhou: 'Falhou', cancelado: 'Cancelado'};
+  const ROTULO = {fila: 'Na fila', traduzindo: 'Traduzindo…', pronto: 'Pronto', falhou: 'Falhou', cancelado: 'Cancelado', aguardando: 'Aguardando IA web'};
   const hms = (s) => { s = Math.max(0, Math.round(s)); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60; return (h ? h + 'h ' : '') + (h || m ? String(m).padStart(h ? 2 : 1, '0') + 'min ' : '') + String(x).padStart(h || m ? 2 : 1, '0') + 's'; };
   const visivel = () => !$('pg-traducoes').hidden;
 
@@ -30,7 +30,7 @@
     const total = e.total || 0, feitas = Math.min(e.feitas || 0, total || e.feitas || 0);
     const pct = e.estado === 'concluido' ? 100 : total ? Math.floor(feitas / total * 100) : 0;
     $('tr-atual').textContent = ativo ? (atual ? `Traduzindo agora: ${atual.nome}${atual.etapa ? ' — ' + atual.etapa : ''}` : 'Preparando…')
-      : e.estado === 'concluido' ? 'Tradução concluída.' : e.estado === 'erro' ? (e.erro === 'Tradução cancelada.' ? 'Tradução cancelada.' : 'A tradução parou.') : '';
+      : e.estado === 'concluido' ? (e.resumo && e.resumo.aguardando && !e.resumo.capitulos ? 'Textos prontos para a IA web.' : 'Tradução concluída.') : e.estado === 'erro' ? (e.erro === 'Tradução cancelada.' ? 'Tradução cancelada.' : 'A tradução parou.') : '';
     const barra = $('tr-barra'); barra.setAttribute('aria-valuenow', String(pct));
     barra.className = 'tr-barra' + (e.estado === 'concluido' ? ' ok' : e.estado === 'erro' && e.erro !== 'Tradução cancelada.' ? ' erro' : '');
     $('tr-barra-in').style.width = pct + '%';
@@ -53,6 +53,12 @@
         x.addEventListener('click', async () => { await acao('/api/traducao/cancelar-item', {rel: i.rel}, (r) => (r.onde === 'fila' ? 'Capítulo tirado da fila.' : 'Cancelando este capítulo…')); sondar(); });
         li.append(x);
       }
+      if (i.rel && i.estado === 'aguardando') {
+        const x = document.createElement('button'); x.type = 'button'; x.className = 'btn pequeno principal'; x.textContent = 'Exportar / importar';
+        x.title = 'Abre o texto pronto para a IA e a área para colar a tradução';
+        x.addEventListener('click', () => { const f = typeof achar === 'function' ? achar(i.rel) : null; if (f) WebIA.abrir(f.obra, new Set([i.rel])); else aviso('Abra a obra na Biblioteca → Mais ações → Tradução com IA na web.'); });
+        li.append(x);
+      }
       if (i.rel && (i.estado === 'cancelado' || i.estado === 'falhou')) {
         const x = document.createElement('button'); x.type = 'button'; x.className = 'btn pequeno'; x.textContent = 'Tentar de novo';
         x.title = 'Refaz só este capítulo, com o mesmo motor da tradução original';
@@ -64,7 +70,7 @@
       return li;
     }));
     const r = e.resumo;
-    $('tr-resumo').textContent = r ? `Resultado: ${r.falas} fala(s) em ${r.capitulos} capítulo(s)` + (r.revisar ? ` · ${r.revisar} a revisar` : '') + (r.erros ? ` · ${r.erros} com erro` : '') + (r.falhas && r.falhas.length ? ` · ${r.falhas.length} capítulo(s) com falha` : '') + '.' : '';
+    $('tr-resumo').textContent = r ? `Resultado: ${r.falas} fala(s) em ${r.capitulos} capítulo(s)` + (r.revisar ? ` · ${r.revisar} a revisar` : '') + (r.erros ? ` · ${r.erros} com erro` : '') + (r.falhas && r.falhas.length ? ` · ${r.falhas.length} capítulo(s) com falha` : '') + (r.aguardando ? ` · ${r.aguardando} capítulo(s) com textos prontos para a IA web: use “Exportar / importar” na lista abaixo.` : '.') : '';
     if (e.log && e.log.length) { anexarLog($('tr-log'), e.log); cursorLog = e.log_total; }
   }
 

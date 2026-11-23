@@ -27,7 +27,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 from baixador.biblioteca import acervo as biblioteca
-from baixador.traducao import config, executor, legado
+from baixador.traducao import config, executor, legado, web_ia
 from baixador.navegador import navegadores
 from baixador.biblioteca import capa as capa_obra, estrutura, exportar, lidos, obra as dados_obra, organizacao
 from baixador.servidor.base import (
@@ -51,6 +51,7 @@ ESTATICOS = {
     "/estatico/comum.js": ("notebook/comum.js", JS),
     "/estatico/baixar.js": ("notebook/baixar.js", JS),
     "/estatico/traducoes.js": ("notebook/traducoes.js", JS),
+    "/estatico/webia.js": ("notebook/webia.js", JS),
     "/estatico/biblioteca.js": ("notebook/biblioteca.js", JS),
     "/estatico/celular.js": ("notebook/celular.js", JS),
     **ESTATICOS_LEITOR,
@@ -356,7 +357,7 @@ class Manipulador(BaseHTTPRequestHandler):
             tamanho = int(self.headers.get("Content-Length", "0"))
         except ValueError:
             return self._negar(400, "Requisição inválida.")
-        if not 0 <= tamanho <= MAX_CORPO:
+        if not 0 <= tamanho <= (web_ia.MAX_IMPORTACAO if partes.path == "/api/web/importar" else MAX_CORPO):
             return self._negar(413, "Requisição grande demais.")
         self.close_connection = False
         try:
@@ -438,6 +439,9 @@ class Manipulador(BaseHTTPRequestHandler):
             except ErroTraducao as erro:
                 return self._negar(400, str(erro))
             return self._json(200, {"ok": True, "removidos": n})
+
+        if caminho.startswith("/api/web/"):                      # tradução com IA na web (manual)
+            return self._web_ia(caminho[len("/api/web/"):], dados)
 
         if caminho == "/api/traducao/abrir-leitor":
             return self._abrir_leitor(self.server.traducao.pasta)  # type: ignore[attr-defined]
@@ -616,6 +620,7 @@ class Manipulador(BaseHTTPRequestHandler):
         tarefa = self.server.traducao  # type: ignore[attr-defined]
         raiz: Path = self.server.raiz  # type: ignore[attr-defined]
         lote = str(dados.get("lote", ""))
+        cfg = {**config.ler(), "motor": "web"} if dados.get("motor") == "web" else None     # só esta tarefa usa o motor "web"; a configuração geral não muda
         try:
             if lote in ("todos", "pendentes"):
                 obra = str(dados.get("obra", ""))[:120]
@@ -626,24 +631,82 @@ class Manipulador(BaseHTTPRequestHandler):
                 ]
                 if not lista:
                     return self._negar(404, "Nenhum capítulo para traduzir.")
-                tarefa.iniciar_lote(lista)
+                tarefa.iniciar_lote(lista, cfg=cfg)
                 return self._json(200, {"ok": True, "conjuntos": len(lista)})
             if isinstance(dados.get("rels"), list):                      # capítulos escolhidos à mão (traduzir de novo)
                 pedidos = {str(r)[:300] for r in dados["rels"]}
                 lista = [raiz / c["rel"] for o in biblioteca.listar(raiz)["obras"] for c in o["capitulos"] if c["rel"] in pedidos]
                 if not lista:
                     return self._negar(404, "Nenhum dos capítulos escolhidos foi encontrado.")
-                tarefa.iniciar_lote(lista)
+                tarefa.iniciar_lote(lista, cfg=cfg)
                 return self._json(200, {"ok": True, "conjuntos": len(lista)})
             achado = next((c for o in biblioteca.listar(raiz)["obras"] for c in o["capitulos"] if c["rel"] == str(dados.get("rel", ""))), None)
             if achado is None:
                 return self._negar(404, "Capítulo não encontrado. Baixe as imagens antes de traduzir.")
-            tarefa.iniciar(raiz / achado["rel"])
+            tarefa.iniciar(raiz / achado["rel"], cfg=cfg)
         except RuntimeError as erro:
             return self._negar(409, str(erro))
         except ErroBaixador as erro:
             return self._negar(422, str(erro))
         return self._json(200, {"ok": True})
+
+    def _web_ia(self, rota: str, dados: Dict[str, Any]) -> None:
+        raiz: Path = self.server.raiz  # type: ignore[attr-defined]
+        tarefa = self.server.traducao  # type: ignore[attr-defined]
+        obra = str(dados.get("obra", ""))[:120]
+        if rota == "capitulos":
+            return self._json(200, {"capitulos": web_ia.estado_dos_capitulos(raiz, obra), "limite_padrao": web_ia.LIMITE_PADRAO})
+        if rota in ("exportar", "baixar"):
+            rels = dados.get("rels")
+            if not isinstance(rels, list):
+                return self._negar(400, "Escolha os capítulos.")
+            try:
+                arquivos = web_ia.exportar(raiz, obra, [str(r)[:300] for r in rels], bool(dados.get("introducao", True)), bool(dados.get("dividir", False)), int(dados.get("limite") or web_ia.LIMITE_PADRAO))
+            except (ValueError, TypeError) as erro:
+                return self._negar(422, str(erro))
+            if rota == "exportar":
+                return self._json(200, {"arquivos": arquivos})
+            pasta = web_ia._nome_seguro(obra)
+            if len(arquivos) == 1:
+                corpo, tipo, nome = arquivos[0]["conteudo"].encode("utf-8"), "text/plain; charset=utf-8", arquivos[0]["nome"]
+            else:
+                corpo, tipo, nome = web_ia.zip_dos_arquivos(arquivos, pasta), "application/zip", f"{pasta}-textos.zip"
+            return self._enviar(200, tipo, corpo, extras={"Content-Disposition": f'attachment; filename="{nome}"'})
+        if rota == "importar":
+            textos = dados.get("textos")
+            if not isinstance(textos, list) or not all(isinstance(t, str) for t in textos) or not any(t.strip() for t in textos):
+                return self._negar(400, "Cole o texto traduzido ou escolha os arquivos TXT.")
+            analise = web_ia.analisar(raiz, textos)
+            resposta: Dict[str, Any] = {"ok": True, "aplicado": False, "iniciou": 0}
+            if dados.get("gravar"):
+                completos = web_ia.gravar(analise)
+                resposta["aplicado"] = True
+                resposta.update(self._concluir_web(raiz, tarefa, completos))
+            resposta["relatorio"] = web_ia.relatorio(analise)
+            return self._json(200, resposta)
+        if rota == "aplicar":                                    # termina os capítulos que já têm todas as traduções
+            rels = dados.get("rels") if isinstance(dados.get("rels"), list) else [c["rel"] for c in web_ia.estado_dos_capitulos(raiz, obra) if c["completo"]]
+            validos = {c["rel"] for c in web_ia.estado_dos_capitulos(raiz, obra) if c["completo"]}
+            alvo = [str(r) for r in rels if str(r) in validos]
+            if not alvo:
+                return self._negar(404, "Nenhum capítulo com todas as traduções importadas.")
+            r = self._concluir_web(raiz, tarefa, alvo)
+            if not r["iniciou"]:
+                return self._negar(409, r["aviso"])
+            return self._json(200, {"ok": True, **r})
+        return self._negar(404, "Endereço desconhecido.")
+
+    @staticmethod
+    def _concluir_web(raiz: Path, tarefa: Any, completos: List[str]) -> Dict[str, Any]:
+        """Capítulos com todas as traduções importadas: o tradutor termina a limpeza e libera a leitura. Se já há uma tradução
+        em andamento nada é interrompido: as traduções ficam guardadas e podem ser aplicadas depois."""
+        if not completos:
+            return {"iniciou": 0}
+        try:
+            n = tarefa.iniciar_ou_enfileirar_web([raiz / r for r in completos])
+        except RuntimeError:
+            return {"iniciou": 0, "pendentes": len(completos), "aviso": "Há outra tradução em andamento. As traduções ficaram guardadas: quando ela terminar, clique em Importar de novo (com o mesmo texto) para aplicar."}
+        return {"iniciou": n}
 
     def _exportar(self, consulta: Dict[str, List[str]]) -> None:
         """Monta o ZIP num arquivo temporário (não na memória) e o envia como download. Só lê a biblioteca."""

@@ -16,6 +16,7 @@ import { processChapter } from './obra/pipeline.js';
 import { createEngines, defaultEngineId } from './services/index.js';
 import { progresso } from './progresso.js';
 import { resetEngines } from './translator.js';
+import { NOME_WEB, prepararTextos, situacao } from './vision/web.js';
 
 export const FORMATO = 2;
 const isDir = (p) => stat(p).then((s) => s.isDirectory(), () => false);
@@ -39,6 +40,7 @@ export async function resultadoValido(file) {
 
 // Antes de gastar minutos de OCR: o motor escolhido está de pé? Nada de trocar de motor sozinho.
 export async function verificarMotor(motor, env = process.env, fetchFn = fetch) {
+  if ((motor ?? env.TRANSLATION_ENGINE) === 'web') return { motor: 'web', nome: NOME_WEB }; // tradução manual: nada para conferir
   const engines = createEngines(env);
   const id = defaultEngineId(engines, { ...env, TRANSLATION_ENGINE: motor ?? env.TRANSLATION_ENGINE });
   if (id !== 'local') return { motor: id, nome: engines[id].name };
@@ -99,7 +101,7 @@ async function publicar(cap, work) {
   await mkdir(path.join(work, 'limpeza'), { recursive: true });
   const limpeza = path.join(work, 'etapa6', 'limpeza');
   for (const f of (await isDir(limpeza)) ? await readdir(limpeza) : []) await renomear(path.join(limpeza, f), path.join(work, 'limpeza', f));
-  for (const d of ['etapa3', 'etapa4a', 'etapa4b', 'etapa4c', 'etapa6', 'etapa8', 'leitor']) await rm(path.join(work, d), { recursive: true, force: true });
+  for (const d of ['etapa3', 'etapa4a', 'etapa4b', 'etapa4c', 'etapa6', 'etapa8', 'leitor', 'web']) await rm(path.join(work, d), { recursive: true, force: true });
   await rm(path.join(work, 'manifest.json'), { force: true });
   await writeFile(novo, dados);
   await rm(velha, { recursive: true, force: true });
@@ -136,6 +138,17 @@ export async function traduzirCapitulo({ capitulo, motor, refazer = false, env =
   const chapter = { id: path.basename(cap), imagesDir, outDir: work };
   await mkdir(work, { recursive: true });
   await prepararAuxiliares(cap, work, log);
+  if (verificado.motor === 'web') {
+    // 1ª parte: detecta e lê as falas; se faltar a tradução que a pessoa traz da IA na web, para aqui SEM publicar nada
+    // (a tradução anterior, se houver, continua valendo). Quando todas as falas têm tradução importada, segue até o fim.
+    await processChapter(chapter, { engine: 'web', log, ate: 'etapa4a' });
+    const prep = await prepararTextos({ ocrFile: path.join(work, 'etapa4a', 'ocr.json'), work });
+    if (!prep.completo) {
+      progresso({ evento: 'aguardando', textos: prep.textos, importadas: prep.importadas, codigo: prep.codigo });
+      log(`${prep.textos} texto(s) prontos para levar à IA na web (${prep.importadas} já importados). A tradução termina quando todos forem importados.`);
+      return { aguardando: true, textos: prep.textos, importadas: prep.importadas };
+    }
+  }
   await processChapter(chapter, { engine: verificado.motor, log });
   const dados = await publicar(cap, work);
   const falas = dados.pages.reduce((n, p) => n + p.units.length, 0);

@@ -328,6 +328,7 @@ function desenharObra(o) {
     pn.append(itemMenu('traduzir', 'Retraduzir capítulos…', '', () => iniciarSel('retraduzir')));
     pn.append(el('hr'));
   }
+  if (o.capitulos.length) pn.append(itemMenu('traduzir', 'Tradução com IA na web…', '', () => WebIA.abrir(o)));
   if (o.capitulos.length) pn.append(itemMenu('baixar', 'Exportar para o app…', '', () => { escolhido = null; modoSel = {tipo: 'exportar', sel: new Set()}; desenhar(); }));
   if (feitas) pn.append(itemMenu('lixo', `Excluir ${feitas === 1 ? 'a tradução' : feitas + ' traduções'}`, 'perigo', async () => {
     if (!confirm(`Excluir ${feitas === 1 ? 'a tradução' : 'as ' + feitas + ' traduções'} de “${o.nome}”?\n\nAs imagens originais ficam. Isto não pode ser desfeito.`)) return;
@@ -429,7 +430,7 @@ async function sondarTraducao() {
   const aviso_ = (e.avisos || []).join(' ');
   const base = rodando
     ? `Traduzindo… ${e.total ? Math.floor(e.feitas / e.total * 100) : 0}%` + (e.capitulos > 1 ? ` · ${e.prontos}/${e.capitulos} capítulos prontos para ler` : '')
-    : e.estado === 'concluido' ? `Pronto: ${e.resumo.falas} fala(s) em ${e.resumo.capitulos} capítulo(s)` + (e.resumo.revisar ? ` · ${e.resumo.revisar} a revisar` : '') + (e.resumo.erros ? ` · ${e.resumo.erros} com erro` : '') + '.'
+    : e.estado === 'concluido' ? `Pronto: ${e.resumo.falas} fala(s) em ${e.resumo.capitulos} capítulo(s)` + (e.resumo.revisar ? ` · ${e.resumo.revisar} a revisar` : '') + (e.resumo.erros ? ` · ${e.resumo.erros} com erro` : '') + (e.resumo.aguardando ? ` · ${e.resumo.aguardando} aguardando a tradução da IA web` : '') + '.'
     : e.estado === 'erro' ? (e.erro || 'Erro.') : '';
   const texto = [base, aviso_].filter(Boolean).join(' ');
   const chave = `${e.estado}|${e.inicio}|${e.fim}`;

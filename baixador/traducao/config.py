@@ -19,6 +19,7 @@ MOTORES = {
     "deepl": "DeepL (na nuvem; envia só o texto; exige DEEPL_API_KEY no .env)",
     "gemini": "Gemini (na nuvem; envia só o texto; exige GEMINI_API_KEY no .env)",
     "mymemory": "MyMemory (na nuvem, grátis; tradução literal, qualidade básica)",
+    "web": "IA na web (manual): você copia os textos, traduz no ChatGPT/Gemini/Claude e importa de volta; sem API nem chave",
 }
 MODELO_PADRAO = "translategemma:4b"
 MODELOS = {                                                  # só vale para o motor local (baixe com `ollama pull <nome>`)

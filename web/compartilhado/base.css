@@ -377,3 +377,24 @@ figure.mini .abaixo { display: block; width: 100%; border: 0; border-top: 1px so
 @keyframes bib-sobe { from { transform: translateY(24px); opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .bib-popover, .bib-painel { animation: none; } .bib .capa-card, .bib .capa-card:hover { transform: none; } .bib-busca input { transition: none; } }
 @media (prefers-reduced-transparency: reduce) { .bib-barra { background: var(--fundo); backdrop-filter: none; -webkit-backdrop-filter: none; } }
+
+/* IA na web */
+.webia { width: min(760px, 94vw); max-height: 90vh; overflow: auto; padding: 18px 20px; border: 1px solid var(--borda); border-radius: var(--raio); background: var(--painel); color: var(--texto); }
+.webia::backdrop { background: rgb(0 0 0 / .45); }
+.webia-cab { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.webia-cab h3 { margin: 0; }
+.webia-sec { display: grid; gap: 10px; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--borda); }
+.webia-sec h4 { margin: 0; }
+.webia-lista { display: grid; max-height: 200px; overflow: auto; border: 1px solid var(--borda); border-radius: var(--raio); }
+.webia-cap { display: flex; gap: 10px; align-items: center; padding: 6px 10px; }
+.webia-cap:hover { background: var(--realce); }
+.webia-cap .nome { font-weight: 600; min-width: 80px; }
+.webia-cap .est { color: var(--suave); font-size: .85rem; } .webia-cap .est.ok { color: var(--ok); } .webia-cap .est.ativo { color: var(--aviso); }
+.webia-linha { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.webia .marcar { display: inline-flex; gap: 6px; align-items: center; }
+.webia input[type=number] { width: 92px; font: inherit; padding: 4px 6px; background: var(--fundo); color: var(--texto); border: 1px solid var(--borda); border-radius: 6px; }
+.webia-area { width: 100%; box-sizing: border-box; font: .85rem var(--mono); padding: 8px; background: var(--fundo); color: var(--texto); border: 1px solid var(--borda); border-radius: var(--raio); resize: vertical; }
+.webia-arq { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--borda); }
+.webia-arq .nome { font-family: var(--mono); font-size: .85rem; margin-right: auto; }
+.webia-relatorio p { margin: 2px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.webia-relatorio .ok { color: var(--ok); } .webia-relatorio .aviso { color: var(--aviso); }

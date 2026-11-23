@@ -4,18 +4,20 @@ import { progresso } from '../progresso.js';
 import { run as detect } from '../vision/run.js';
 import { ocrChapter } from '../vision/ocr.js';
 import { translateChapter } from '../vision/translate.js';
+import { translateWeb } from '../vision/web.js';
 import { writeView } from '../vision/translation-view.js';
 import { cleanChapter } from '../vision/clean.js';
 import { detectText } from '../vision/textstage.js';
 import { PIPELINE_VERSION, STAGES, chapterState, manifestFile } from './chapters.js';
 
-const REAL = { detect, refine: detectText, ocr: ocrChapter, translate: translateChapter, view: writeView, clean: cleanChapter };
+const REAL = { detect, refine: detectText, ocr: ocrChapter, translate: translateChapter, translateWeb, view: writeView, clean: cleanChapter };
 
 // Roda as etapas 3, 8, 4a, 4b, 4c e 6 de um capítulo, cada uma na sua pasta (<outDir>/etapaX/), e monta o
 // leitor.json consolidado em <outDir>/leitor/. Etapa já pronta (mesmas imagens) é pulada; `refazer` roda tudo.
 // A 4b tem cache próprio por lote, então refazer não traduz de novo o que não mudou.
 // `deps` existe para teste: troca as etapas por falsas.
-export async function processChapter(chapter, { engine, refazer = false, log = console.log, deps = REAL } = {}) {
+// `ate: 'etapa4a'` para depois do OCR (motor "web": as falas são exportadas e a tradução volta de fora).
+export async function processChapter(chapter, { engine, refazer = false, log = console.log, deps = REAL, ate = null } = {}) {
   const st = await chapterState(chapter);
   if (!st.pages.length) throw new Error(`Capítulo "${chapter.id}": nenhuma imagem com número no início do nome em ${chapter.imagesDir}.`);
   const out = chapter.outDir;
@@ -45,7 +47,8 @@ export async function processChapter(chapter, { engine, refazer = false, log = c
   await step(s3, () => deps.detect(chapter.imagesDir, at(s3)));
   await step(s8, () => (deps.refine ?? detectText)(file(s3), at(s8), { log }));
   await step(s4a, () => deps.ocr(file(s8), at(s4a), { log }));
-  await step(s4b, () => deps.translate(file(s4a), at(s4b), { engine, log }));
+  if (ate === s4a.id) return { id: chapter.id, pages: st.pages.length, parcial: true };
+  await step(s4b, () => (engine === 'web' ? deps.translateWeb ?? translateWeb : deps.translate)(file(s4a), at(s4b), { engine, log }));
   let view;
   await step(s4c, async () => {
     view = await deps.view({ results3: file(s8), translationFile: file(s4b), ocrFile: file(s4a), outDir: at(s4c) });
