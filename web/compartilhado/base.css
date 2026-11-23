@@ -136,10 +136,6 @@ figure.mini .abaixo { display: block; width: 100%; border: 0; border-top: 1px so
 .detalhe h3 { font-size: 1.05rem; }
 
 /* ---- celular (aba do notebook) */
-.qr { display: grid; place-items: center; width: 232px; height: 232px; background: #fff; border-radius: var(--raio); padding: 12px; border: 1px solid var(--borda); }
-.qr svg, .qr img { width: 100%; height: 100%; display: block; }
-.celular-grade { display: grid; gap: 24px 36px; grid-template-columns: auto minmax(0, 1fr); align-items: start; }
-@media (max-width: 720px) { .celular-grade { grid-template-columns: 1fr; } }
 .url-copia { font: 13px/1.4 var(--mono); word-break: break-all; padding: 10px 12px; border: 1px solid var(--borda); border-radius: var(--raio); background: var(--painel); user-select: all; }
 .passos { margin: 0; padding-left: 20px; display: grid; gap: 6px; }
 
@@ -398,3 +394,50 @@ figure.mini .abaixo { display: block; width: 100%; border: 0; border-top: 1px so
 .webia-arq .nome { font-family: var(--mono); font-size: .85rem; margin-right: auto; }
 .webia-relatorio p { margin: 2px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .webia-relatorio .ok { color: var(--ok); } .webia-relatorio .aviso { color: var(--aviso); }
+
+/* ---- Leitura pelo celular ---- */
+.cel { display: grid; gap: 22px; padding-top: 8px; max-width: 980px; margin-inline: auto; }
+.cel-topo { display: grid; grid-template-columns: 1fr; justify-items: center; text-align: center; gap: 18px; padding-bottom: 22px; border-bottom: 1px solid var(--borda); }
+.cel-titulo h2 { margin: 0 0 6px; font-size: 1.75rem; letter-spacing: -.02em; line-height: 1.15; }
+.cel-titulo p { margin: 0 auto; color: var(--suave); max-width: 52ch; line-height: 1.5; }
+.cel-controle { display: grid; gap: 12px; justify-items: center; }
+.cel-estado { display: flex; align-items: center; gap: 10px; font-size: .95rem; }
+.cel-led { width: 10px; height: 10px; border-radius: 50%; background: var(--suave); opacity: .55; box-shadow: 0 0 0 4px transparent; transition: box-shadow .3s ease, background .3s ease; }
+.cel-controle[data-ligado="1"] .cel-led { background: var(--ok); opacity: 1; box-shadow: 0 0 0 4px var(--fundo-ok); }
+.cel-botoes { display: flex; gap: 10px; }
+.cel-auto { font-size: .85rem; color: var(--suave); }
+.cel-cartoes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+.cel-cartao { display: grid; gap: 22px; align-content: start; padding: 26px; background: var(--painel); border: 1px solid var(--borda); border-radius: 16px; box-shadow: var(--sombra); position: relative; overflow: hidden; transition: border-color .2s ease; }
+.cel-cartao::before { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 4px; background: var(--borda); transition: background .2s ease; }
+.cel-cartao.ativo { border-color: var(--acento); } .cel-cartao.ativo::before { background: var(--acento); }
+/* o QR fica numa moldura com cantos de mira, como o visor da câmera que vai lê-lo */
+.cel-qr-moldura { --c: var(--acento); --t: 3px; --l: 26px; justify-self: center; width: min(100%, 252px); aspect-ratio: 1; padding: 16px; box-sizing: border-box;
+  background:
+    linear-gradient(var(--c), var(--c)) left top / var(--l) var(--t) no-repeat, linear-gradient(var(--c), var(--c)) left top / var(--t) var(--l) no-repeat,
+    linear-gradient(var(--c), var(--c)) right top / var(--l) var(--t) no-repeat, linear-gradient(var(--c), var(--c)) right top / var(--t) var(--l) no-repeat,
+    linear-gradient(var(--c), var(--c)) left bottom / var(--l) var(--t) no-repeat, linear-gradient(var(--c), var(--c)) left bottom / var(--t) var(--l) no-repeat,
+    linear-gradient(var(--c), var(--c)) right bottom / var(--l) var(--t) no-repeat, linear-gradient(var(--c), var(--c)) right bottom / var(--t) var(--l) no-repeat; }
+.cel-cartao:not(.ativo) .cel-qr-moldura { --c: var(--borda); }
+.qr { display: grid; place-items: center; width: 100%; height: 100%; box-sizing: border-box; background: #fff; border-radius: 6px; padding: 10px; border: 1px solid var(--borda); }
+.qr svg { width: 100%; height: 100%; display: block; }
+.qr.vazio { background: var(--fundo); border-style: dashed; color: var(--suave); text-align: center; font-size: .85rem; line-height: 1.45; padding: 18px; }
+.cel-corpo { display: grid; gap: 8px; text-align: center; }
+.cel-corpo h3 { margin: 0; font-size: 1.2rem; letter-spacing: -.01em; }
+.cel-sub { margin: 0; font-weight: 600; color: var(--acento); font-size: .9rem; }
+.cel-corpo .nota { margin: 2px 0 6px; line-height: 1.5; }
+.cel-url { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 6px 6px 6px 12px; background: var(--fundo); border: 1px solid var(--borda); border-radius: 10px; }
+.cel-url code { font: 12.5px/1.4 var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; user-select: all; }
+.cel-rodape { display: grid; gap: 14px; }
+.cel-config { border: 1px solid var(--borda); border-radius: 12px; background: var(--painel); padding: 0 18px; }
+.cel-config summary { display: flex; align-items: baseline; gap: 10px; padding: 14px 0; cursor: pointer; list-style: none; }
+.cel-config summary::-webkit-details-marker { display: none; }
+.cel-config summary::before { content: "▸"; color: var(--suave); display: inline-block; transition: transform .15s ease; }
+.cel-config[open] summary::before { transform: rotate(90deg); }
+.cel-config summary span { margin-left: auto; }
+.cel .msg:empty { display: none; }
+.cel-config summary span { color: var(--suave); font-size: .85rem; }
+.cel-config[open] summary { border-bottom: 1px solid var(--borda); margin-bottom: 14px; }
+.cel-config .passos { padding-bottom: 14px; }
+.cel-seguranca { display: flex; justify-content: center; text-align: center; align-items: center; gap: 16px; flex-wrap: wrap; }
+.cel-seguranca .nota { margin: 0; max-width: 62ch; }
+@media (max-width: 760px) { .cel-cartoes { grid-template-columns: 1fr; } .cel-cartao { padding: 20px; } }

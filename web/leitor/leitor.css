@@ -56,11 +56,11 @@ body.original .patch, body.original .tr-svg { visibility: hidden; }
   -webkit-tap-highlight-color: transparent; -webkit-user-select: none; user-select: none; outline: none; }
 #progresso button::before { content: ""; position: absolute; left: 0; width: 3px; top: 0; bottom: 1px; background: rgba(150, 156, 168, .38);
   transition: width .12s ease, background .12s ease; }
-#progresso button.lido::before { background: rgba(150, 156, 168, .6); }
+#progresso button.lido::before { background: rgba(34, 211, 238, .78); }
 #progresso button.atual::before { background: #22d3ee; }
 #progresso:hover button::before { width: 8px; }
 #progresso.aberta button::before { width: 16px; background: rgba(255, 255, 255, .14); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .16); }
-#progresso.aberta button.lido::before { background: rgba(34, 190, 214, .5); box-shadow: inset 0 0 0 1px rgba(34, 211, 238, .35); }
+#progresso.aberta button.lido::before { background: rgba(34, 211, 238, .7); box-shadow: inset 0 0 0 1px rgba(34, 211, 238, .45); }
 #progresso.aberta button.atual::before { background: #22d3ee; box-shadow: inset 0 0 0 1px #a5f3fc; }
 #pq-num { position: fixed; z-index: 16; left: 26px; top: 0; transform: translateY(-50%); padding: 4px 10px; border-radius: 8px; pointer-events: none;
   font-weight: 700; font-size: .85rem; font-variant-numeric: tabular-nums; color: #e7ebf1; background: rgba(33, 37, 44, .96); border: 1px solid rgba(255,255,255,.14);

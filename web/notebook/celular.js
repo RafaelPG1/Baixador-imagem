@@ -2,12 +2,13 @@
 let celular = {ligado: false};
 let celularVisto = false;
 
-function desenharQR(url) {
-  const alvo = $('qr');
-  if (!url) { alvo.replaceChildren(Object.assign(document.createElement('span'), {className: 'nota', textContent: 'Desligado'})); return; }
+// Dois QR, cada um com o destino do seu cartão: o do app (endereço do Tailscale) e o do site (endereço do Wi-Fi de casa).
+function desenharQR(id, url, vazio) {
+  const alvo = $(id);
+  if (!url) { alvo.className = 'qr vazio'; alvo.replaceChildren(Object.assign(document.createElement('span'), {textContent: vazio})); return; }
   const qr = qrcode(0, 'M'); qr.addData(url); qr.make();
   const svg = new DOMParser().parseFromString(qr.createSvgTag({cellSize: 4, margin: 0, scalable: true}), 'image/svg+xml').documentElement;
-  alvo.replaceChildren(svg);
+  alvo.className = 'qr'; alvo.replaceChildren(svg);
 }
 
 function aplicarCelular(e) {
@@ -16,19 +17,18 @@ function aplicarCelular(e) {
   const temApp = !!e.url_app, temLocal = !!e.url;
   $('cel-comando').textContent = e.comando_tailscale || '';
   if (document.activeElement !== $('cel-ts')) $('cel-ts').value = e.tailscale || '';
-  $('cel-app-ok').hidden = !temApp;
-  $('cel-app-url').textContent = e.url_app || '';
-  $('cel-local').hidden = !temLocal;
-  $('cel-url').textContent = e.url || '';
-  // Um só QR: o do Tailscale quando configurado (serve ao app e ao navegador, de qualquer lugar); senão o do Wi-Fi de casa.
-  $('cel-qr-legenda').textContent = temApp ? 'O QR abaixo abre o app ou o navegador pelo Tailscale, de qualquer lugar.'
-    : 'O QR abre a leitura no navegador, com o celular no mesmo Wi-Fi. Para usar o app e ler de qualquer lugar, configure o Tailscale abaixo.';
+  $('cel-app-url').textContent = e.url_app || 'Configure o Tailscale abaixo';
+  $('cel-url').textContent = e.url || 'Ligue o acesso e conecte ao Wi-Fi';
+  $('cel-app-copiar').disabled = !temApp; $('cel-copiar').disabled = !temLocal;
+  $('cel-cartao-app').classList.toggle('ativo', !!e.ligado && temApp); $('cel-cartao-site').classList.toggle('ativo', !!e.ligado && temLocal);
   $('cel-app-msg').textContent = e.tailscale && !e.ligado ? 'Ligue o acesso do celular (botão acima) para gerar o QR.' : '';
   $('cel-ligar').hidden = e.ligado; $('cel-desligar').hidden = !e.ligado;
-  $('cel-ligado').hidden = !e.ligado || !(temApp || temLocal);
   $('cel-sem-rede').hidden = !(e.ligado && !temApp && !temLocal);
   $('cel-lembrar').checked = !!e.ligar_ao_abrir;
-  desenharQR(e.ligado ? (e.url_app || e.url) : '');
+  $('cel-controle').dataset.ligado = e.ligado ? '1' : '0';
+  $('cel-estado-txt').textContent = e.ligado ? 'Acesso ligado' : 'Acesso desligado';
+  desenharQR('qr-app', e.ligado && temApp ? e.url_app : '', e.ligado ? 'Configure o Tailscale para gerar este QR' : 'Ligue o acesso para gerar o QR');
+  desenharQR('qr-site', e.ligado && temLocal ? e.url : '', e.ligado ? 'Sem endereço de Wi-Fi no notebook' : 'Ligue o acesso para gerar o QR');
   $('cel-msg').textContent = e.erro || '';
   $('chip-celular').className = 'chip' + (e.ligado ? ' ok' : '');
   $('chip-celular').textContent = e.ligado ? 'Celular ligado' : 'Celular desligado';
