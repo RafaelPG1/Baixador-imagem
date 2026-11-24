@@ -93,6 +93,7 @@ function estadoDoCapitulo(c) {
     if (f.estado === 'fila') return {classe: 'ativo', t: 'Na fila', linha: 'fila'};
     if (f.estado === 'falhou') return {classe: 'erro', t: 'Falhou', linha: 'pend'};
   }
+  if (c.baixa_incompleta) return {classe: 'erro', t: 'Download incompleto · apague e baixe de novo', linha: 'pend'};
   if (c.traduzido && c.incompleta) return {classe: 'aviso', t: `Incompleto · ${c.incompleta} fala${c.incompleta === 1 ? '' : 's'} sem tradução`, linha: 'pronto'};
   if (c.traduzido && c.revisar) return {classe: 'ok', t: `Traduzido · ${c.revisar} a revisar`, linha: 'pronto'};
   return c.traduzido ? {classe: 'ok', t: 'Traduzido', linha: 'pronto'} : {classe: '', t: 'Sem tradução', linha: 'pend'};
@@ -207,7 +208,7 @@ function desenharDetalhe() {
   $('pg-biblioteca').classList.toggle('com-painel', !!achado);
   if (!achado) { box.hidden = true; box.replaceChildren(); ultimoPainel = ''; return; }
   const {obra, cap} = achado;
-  const chave = [cap.rel, cap.lido, cap.traduzido, cap.incompleta, cap.revisar, cap.imagens, cap.numero, cap.titulo, obra.nome].join('|');
+  const chave = [cap.rel, cap.lido, cap.traduzido, cap.incompleta, cap.baixa_incompleta, cap.revisar, cap.imagens, cap.numero, cap.titulo, obra.nome].join('|');
   if (chave === ultimoPainel && !box.hidden) return;                       // nada mudou: não refaz (não perde o que está sendo digitado)
   ultimoPainel = chave;
   box.hidden = false; box.dataset.cor = corDe(obra);

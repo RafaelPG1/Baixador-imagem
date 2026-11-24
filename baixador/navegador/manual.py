@@ -436,15 +436,19 @@ class Colecao:
                 return None
             return item.dados, item.formato
 
-    def salvar(self, ids: List[int], pasta: Path) -> Tuple[List[str], List[Tuple[str, str]], int]:
-        """Grava as marcadas. Devolve (nomes gravados, falhas (url, motivo), quantas já estavam salvas)."""
+    def salvar(self, ids: List[int], pasta: Path, parar: Optional[Callable[[], bool]] = None) -> Tuple[List[str], List[Tuple[str, str]], int]:
+        """Grava as marcadas. Devolve (nomes gravados, falhas (url, motivo), quantas já estavam salvas).
+        `parar()` verdadeiro entre dois arquivos interrompe: o que falta vira falha "interrompido" (o que já foi gravado fica)."""
         salvos: List[str] = []
         falhas: List[Tuple[str, str]] = []
         ja_salvas = 0
         with self._lock:
             pedidas = set(ids)
             ordem = [id_ for id_ in self._itens if id_ in pedidas]
-        for id_ in ordem:
+        for k, id_ in enumerate(ordem):
+            if parar is not None and parar():
+                falhas.append((f"{len(ordem) - k} imagem(ns)", "interrompido: o salvamento foi cancelado"))
+                break
             with self._lock:
                 item = self._itens.get(id_)
                 if item is None:
@@ -596,6 +600,9 @@ class SessaoManual:
         self._thread: Optional[threading.Thread] = None
         self._cancelar = threading.Event()
         self._fechar = threading.Event()
+        self._parar_auto = threading.Event()               # "Cancelar" com o automático rodando: nada mais é buscado, salvo ou avançado
+        self._resultado_busca = ""                          # ok | cancelada | falhou: a busca só vale como feita se terminou "ok"
+        self.limite_capitulos = 0                           # automático: quantos capítulos baixar (0 = só o atual)
         self._varrer = False
         self.automatico_ativo = False
         self.pagina_info: Dict[str, str] = {"titulo": "", "url": ""}   # aba que o usuário está vendo
@@ -647,7 +654,7 @@ class SessaoManual:
             return {
                 "estado": self.estado, "erro": self.erro, "execucao": self.execucao,
                 "reiniciar": reiniciar, "salvando": self.salvando, "automatico": self.automatico_ativo,
-                "pagina": dict(self.pagina_info), "aviso": self.aviso, "continuar": self.continuar_ativo,
+                "pagina": dict(self.pagina_info), "aviso": self.aviso, "continuar": self.continuar_ativo, "limite": self.limite_capitulos,
                 "log": self.log[desde_log:], "log_total": len(self.log),
                 "versao": self.colecao.versao,
                 "itens": self.colecao.para_tela() if enviar_itens else None,
@@ -710,6 +717,7 @@ class SessaoManual:
             if self.estado != "aguardando":
                 raise RuntimeError("Abra o site no navegador primeiro.")
             self._cancelar.clear()
+            self._resultado_busca = ""
             self._definir("procurando")
         self._fila.put((
             "procurar",
@@ -821,7 +829,7 @@ class SessaoManual:
         self, url: str, pasta: str, navegador: str = "auto", caminho: Optional[str] = None, perfil: str = "proprio",
         bloquear_abas: bool = True, espera: int = 30, ignorar_comentarios: bool = True,
         organizar: Optional[Dict[str, Any]] = None, continuar: bool = False, modo_busca: str = "rapido",
-        ao_concluir: Optional[Callable[[List[Path]], None]] = None, pular_primeiro: bool = False,
+        ao_concluir: Optional[Callable[[List[Path]], None]] = None, pular_primeiro: bool = False, limite: int = 0,
     ) -> None:
         """Faz sozinho o que o modo manual faz com "Automático B": abre, procura, baixa tudo e fecha.
 
@@ -834,6 +842,8 @@ class SessaoManual:
             raise ValueError("Informe a pasta de destino.")
         self.abrir(url, navegador, caminho, perfil, bloquear_abas)
         with self._lock:
+            self._parar_auto.clear()
+            self.limite_capitulos = max(0, min(int(limite or 0), LIMITE_CAPITULOS_AUTO))
             self.automatico_ativo = True
             self._organizar_auto = organizar is not None
             self.continuar_ativo = bool(continuar) and organizar is not None
@@ -843,13 +853,16 @@ class SessaoManual:
             target=self._coordenar_automatico, args=(pasta, int(espera), bool(ignorar_comentarios), organizar, modo_busca if modo_busca in MODOS_BUSCA else "rapido", bool(pular_primeiro) and organizar is not None), daemon=True
         ).start()
 
+    def _cancelado(self) -> bool:
+        return self._parar_auto.is_set() or self._fechar.is_set()
+
     def _esperar_estado(self, saem: tuple, limite_s: float) -> str:
         """Espera o estado sair do conjunto `saem` (ou o navegador ser fechado); devolve o estado final."""
         fim = time.monotonic() + limite_s
         while time.monotonic() < fim and not self._fechar.is_set():
             with self._lock:
                 estado = self.estado
-            if estado not in saem:
+            if estado not in saem or self._parar_auto.is_set():
                 return estado
             time.sleep(0.2)
         with self._lock:
@@ -897,14 +910,23 @@ class SessaoManual:
                 self._registrar("Atualizar: abri o último capítulo salvo" + (f" ({org.rotulo_capitulo(numero, titulo)} de “{obra}”)" if numero is not None else "") + ". Não vou baixá-lo; apertando em “próximo”…")
                 info_cap["ja_existia"] = True
                 return True, "", info_cap
+            if existente and org.ler_meta(Path(base).expanduser() / existente).get("download_incompleto"):
+                info_cap["incompleto"] = True
+                return False, (
+                    f"{org.rotulo_capitulo(numero, titulo)} de “{obra}” já está na biblioteca ({existente}) mas o download dele ficou incompleto. "
+                    "Apague esse capítulo na Biblioteca e baixe de novo."
+                ), info_cap
             if existente:
                 self._registrar(f"{org.rotulo_capitulo(numero, titulo)} de “{obra}” já existe na biblioteca ({existente}); não baixei de novo.")
                 info_cap["ja_existia"] = True
                 return True, "", info_cap
         self.procurar(ignorar, espera, modo)
         estado = self._esperar_estado(("procurando",), 3600)
-        if estado != "aguardando" or self._fechar.is_set():
-            return False, "a busca de imagens foi interrompida; nada foi baixado.", info_cap
+        if self._cancelado():
+            return False, "busca cancelada; nada foi salvo e o capítulo não foi marcado como baixado.", info_cap
+        if estado != "aguardando" or self._resultado_busca != "ok":
+            info_cap["incompleto"] = True
+            return False, "a busca de imagens não terminou (" + ("falhou" if self._resultado_busca == "falhou" else "foi interrompida") + "); nada foi baixado.", info_cap
         ids = [
             i["id"] for i in self.colecao.para_tela()
             if not i.get("erro") and i.get("bytes", 0) > 0 and not i.get("salva")
@@ -928,24 +950,31 @@ class SessaoManual:
             self._registrar(
                 f"Capítulo identificado: {org.rotulo_capitulo(numero, titulo or '')} — obra “{obra or 'sem obra'}” ({rel or 'pasta base'})."
             )
+        if self._cancelado():
+            return False, "cancelado antes de salvar; nada foi salvo.", info_cap
         r = self.baixar(ids, pasta, meta)
-        self._registrar(
-            f"Capítulo baixado: {len(r['salvos'])} imagem(ns) salva(s)"
-            + (f", {len(r['falhas'])} falha(s)" if r["falhas"] else "") + "."
-        )
+        if r["incompleto"]:
+            self._registrar(
+                f"Download INCOMPLETO: {len(r['salvos'])} imagem(ns) salva(s); as demais não foram salvas. O capítulo ficou marcado como incompleto."
+            )
+            info_cap["pasta"], info_cap["incompleto"] = str(pasta), True
+            return False, ("download cancelado" if r["interrompido"] else "download incompleto") + f": {len(r['salvos'])} imagem(ns) salva(s), as demais não. O capítulo foi marcado como incompleto; nada foi dado como concluído.", info_cap
+        self._registrar(f"Capítulo baixado: {len(r['salvos'])} imagem(ns) salva(s).")
         if not r["salvos"]:
             return False, "nenhuma imagem deste capítulo pôde ser salva.", info_cap
         info_cap["salvos"] = len(r["salvos"])
         info_cap["pasta"] = str(pasta)
         return True, "", info_cap
 
-    def definir_continuar(self, ativo: bool) -> None:
+    def definir_continuar(self, ativo: bool, limite: Optional[int] = None) -> None:
         """Liga/desliga, mesmo com o automático rodando, o avanço para os próximos capítulos.
 
         Desligar não interrompe o capítulo em andamento: ele termina de baixar e o processo para ali (sem avançar).
         """
         with self._lock:
             self.continuar_ativo = bool(ativo) and self._organizar_auto
+            if limite is not None:
+                self.limite_capitulos = max(0, min(int(limite), LIMITE_CAPITULOS_AUTO))
             if self.automatico_ativo:
                 self._registrar(
                     "Continuar nos próximos capítulos: LIGADO." if self.continuar_ativo else
@@ -996,7 +1025,11 @@ class SessaoManual:
                     organizar["numero"], organizar["titulo"] = "", ""           # só o 1º capítulo usa o que o usuário digitou
                 ok, motivo, cap = self._baixar_capitulo_auto(pasta, espera, ignorar, organizar, modo, pular=pular_primeiro and not feitos)
                 if not ok:
-                    if self.continuar_ativo or feitos:
+                    if self._parar_auto.is_set() and not self._fechar.is_set():      # cancelado pelo usuário: para tudo e deixa o navegador aberto
+                        manter_aberto = True
+                        self._registrar(f"Modo automático cancelado: {motivo}")
+                        return self._definir_aviso(f"Cancelado: {motivo}")
+                    if self.continuar_ativo or feitos or cap.get("incompleto"):
                         manter_aberto = not self._fechar.is_set()
                         return self._parar_aviso(motivo, baixados, parou_em=ultimo)
                     self._registrar(f"Modo automático: {motivo}")
@@ -1009,8 +1042,17 @@ class SessaoManual:
                     baixados.append(ultimo)
                 if cap.get("pasta"):
                     pastas_feitas.append(Path(cap["pasta"]))
-                if self._fechar.is_set():
+                if self._cancelado():
+                    manter_aberto = not self._fechar.is_set()
                     return
+                with self._lock:
+                    limite = self.limite_capitulos
+                if self.continuar_ativo and limite and len(baixados) >= limite:
+                    # limite pedido atingido, e o último capítulo foi salvo por inteiro (ok=True só vem sem falhas): fecha o navegador
+                    texto = f"Limite de {limite} capítulo(s) atingido: {len(baixados)} baixado(s). Navegador fechado."
+                    self._registrar(texto)
+                    self._definir_aviso(texto)
+                    return self._traduzir_ao_final(pastas_feitas)
                 if not self.continuar_ativo:                                 # desligado (ou nunca ligado): termina aqui
                     self._registrar(
                         "Modo automático concluído." if len(feitos) == 1 else
@@ -1025,8 +1067,9 @@ class SessaoManual:
                     manter_aberto = True
                     return self._parar_aviso(f"não consegui pedir o próximo capítulo ({erro}).", baixados, parou_em=ultimo)
                 estado = self._esperar_estado(("procurando",), 60)
-                if self._fechar.is_set():
-                    return
+                if self._cancelado():
+                    manter_aberto = not self._fechar.is_set()
+                    return self._definir_aviso("Cancelado: o automático parou antes de baixar mais capítulos.") if manter_aberto else None
                 resultado = self._resultado_proximo
                 tipo = self._proximo_tipo
                 if estado == "aguardando" and resultado and not resultado[0] and tipo == "fim":
@@ -1058,6 +1101,10 @@ class SessaoManual:
                 self.continuar_ativo = False
             self._baixar_capas_pendentes()                  # a capa fica para o fim: não segura o download dos capítulos
             if not manter_aberto:
+                for _ in range(300):                        # nunca fecha com arquivo ainda sendo salvo
+                    if not self.salvando:
+                        break
+                    time.sleep(0.2)
                 self.fechar_navegador()
 
     def _traduzir_ao_final(self, pastas: List[Path]) -> None:
@@ -1096,10 +1143,14 @@ class SessaoManual:
         self._fila.put(("proximo", {}))
 
     def cancelar_busca(self) -> None:
+        with self._lock:
+            if self.automatico_ativo:
+                self._parar_auto.set()                       # o automático para de vez: nada mais é buscado, salvo ou avançado
         self._cancelar.set()
 
     def fechar_navegador(self) -> None:
         self._fechar.set()
+        self._parar_auto.set()
         self._cancelar.set()
 
     def encerrar(self, espera: float = 15.0) -> None:
@@ -1140,21 +1191,24 @@ class SessaoManual:
         try:
             with self._lock:
                 self.salvando = True
+            self._cancelar.clear()                                          # cancelar só vale a partir daqui, para este salvamento
             destino = preparar_pasta(pasta)
             with self._lock:
                 self.pasta = destino
             destino_img = destino
             if meta and meta.get("obra"):                                  # capítulo da biblioteca: imagens em Capítulo/img, .json na raiz do capítulo
                 destino_img = preparar_pasta(str(destino / "img"))
-            salvos, falhas, ja = self.colecao.salvar(ids, destino_img)
-            if salvos:
+            salvos, falhas, ja = self.colecao.salvar(ids, destino_img, parar=lambda: self._cancelar.is_set() or self._cancelado())
+            interrompido = any(m.startswith("interrompido") for _, m in falhas)
+            incompleto = bool(falhas)                                       # cancelado ou com imagens que não foram salvas
+            if salvos or (incompleto and meta and meta.get("obra")):
                 try:
                     from baixador.biblioteca import organizacao
 
                     if meta and meta.get("obra"):
                         organizacao.gravar_meta(
                             destino, str(meta.get("obra", "")), meta.get("numero"), str(meta.get("titulo", "")),
-                            str(meta.get("url", "")),
+                            str(meta.get("url", "")), incompleto=incompleto,
                         )
                         pasta_obra = organizacao.caminho_relativo(str(meta.get("obra", "")), meta.get("numero"), str(meta.get("titulo", ""))).split("/")[0]
                         if destino.parent.name == pasta_obra:           # só no layout Obra/Capítulo; nunca numa pasta qualquer
@@ -1171,7 +1225,7 @@ class SessaoManual:
             if ja:
                 self._registrar(f"{ja} imagem(ns) marcada(s) já tinha(m) sido salva(s) e foi(ram) ignorada(s).")
             return {
-                "salvos": salvos, "ja_salvas": ja,
+                "salvos": salvos, "ja_salvas": ja, "incompleto": incompleto, "interrompido": interrompido,
                 "falhas": [{"url": u, "motivo": m} for u, m in falhas],
             }
         finally:
@@ -1952,11 +2006,15 @@ class SessaoManual:
                 )
             if self.colecao.cheia():
                 self._registrar(f"A lista está no limite de {MAX_CANDIDATAS} imagens; baixe as marcadas e limpe a lista.")
+            self._resultado_busca = "ok"
         except Cancelado:
+            self._resultado_busca = "cancelada"
             self._registrar("Busca cancelada. O que já foi encontrado continua na lista.")
         except ErroPlaywright as erro:
+            self._resultado_busca = "falhou"
             self._registrar(f"A busca falhou: {_resumo(erro)}")
         except Exception as erro:
+            self._resultado_busca = "falhou"
             self._registrar(f"A busca falhou ({erro.__class__.__name__}).")
         finally:
             self._cancelar.clear()

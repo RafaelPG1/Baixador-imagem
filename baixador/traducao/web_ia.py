@@ -20,6 +20,7 @@ import zipfile
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
+from baixador.biblioteca import acervo
 from baixador.biblioteca import organizacao as org
 from baixador.biblioteca.capitulo import _subpastas
 
@@ -85,6 +86,8 @@ def _capitulos_da_biblioteca(raiz: Path) -> List[Dict[str, Any]]:
     achados = []
     for obra in _subpastas(Path(raiz)):
         for cap in _subpastas(obra):
+            if not (_dir_web(cap) / "textos.json").is_file():       # barato: a maioria dos capítulos não tem textos preparados
+                continue
             textos = ler_textos(cap)
             if textos:
                 d = org.descrever_capitulo(cap, obra.name)
@@ -96,14 +99,48 @@ def _ordem(c: Dict[str, Any]) -> tuple:
     return org.chave_ordem(c["numero"], c["titulo"])
 
 
+def _todos(raiz: Path) -> List[Dict[str, Any]]:
+    """Todos os capítulos da biblioteca (pela listagem em cache da própria biblioteca, que é barata de repetir)."""
+    return [{**c, "pasta": Path(raiz) / c["rel"], "obra": o["nome"]} for o in acervo.listar(Path(raiz))["obras"] for c in o["capitulos"]]
+
+
+def _concluido(c: Dict[str, Any]) -> bool:
+    """Tradução de verdade concluída (traducao.json válido, nenhuma fala com erro): não pode ser preparada de novo."""
+    return bool(c.get("traduzido")) and not c.get("incompleta")
+
+
 def estado_dos_capitulos(raiz: Path, obra: str) -> List[Dict[str, Any]]:
-    """Para a janela da obra: cada capítulo preparado, com quantos textos tem e quantos já foram importados."""
+    """Capítulos da obra que ainda precisam de tradução, com quantos textos foram preparados e quantos já voltaram.
+    Os que já têm tradução concluída não entram. Pendente, incompleto (falas com erro) e preparado entram."""
     chave = org._chave(obra)
     saida = []
-    for c in sorted((c for c in _capitulos_da_biblioteca(raiz) if org._chave(c["obra"]) == chave), key=_ordem):
-        n, feitas = len(c["textos"]["unidades"]), len(ler_importadas(c["pasta"], c["textos"]))
-        saida.append({"rel": c["rel"], "rotulo": org.rotulo_capitulo(c["numero"], c["titulo"]), "textos": n, "importados": feitas, "completo": feitas == n})
+    for c in sorted((c for c in _todos(raiz) if org._chave(c["obra"] or "") == chave), key=_ordem):
+        if _concluido(c):
+            continue
+        textos = ler_textos(c["pasta"])
+        n = len(textos["unidades"]) if textos else 0
+        feitas = len(ler_importadas(c["pasta"], textos)) if textos else 0
+        saida.append({"rel": c["rel"], "rotulo": org.rotulo_capitulo(c["numero"], c["titulo"]), "numero": c["numero"], "textos": n, "importados": feitas,
+                      "completo": n > 0 and feitas == n, "incompleta": c.get("incompleta", 0)})
     return saida
+
+
+def aplicados(raiz: Path, rels: Iterable[str]) -> Dict[str, bool]:
+    """rel → a tradução está de fato aplicada (traducao.json concluído, sem falas com erro, e a pasta de textos já foi encerrada)."""
+    pedidos = set(rels)
+    return {c["rel"]: _concluido(c) and ler_textos(c["pasta"]) is None for c in _todos(raiz) if c["rel"] in pedidos}
+
+
+def ja_concluidos(raiz: Path, rels: Iterable[str]) -> List[str]:
+    pedidos = set(rels)
+    return [c["rel"] for c in _todos(raiz) if c["rel"] in pedidos and _concluido(c)]
+
+
+def aguardando_da_biblioteca(raiz: Path) -> List[Dict[str, Any]]:
+    """Capítulos com textos preparados para a IA e ainda sem tradução concluída. Vêm do disco, então não somem entre lotes nem ao reabrir o programa."""
+    prontos = {c["rel"] for c in _capitulos_da_biblioteca(Path(raiz))}
+    return [{"rel": c["rel"], "nome": f"{c['obra']} · {org.rotulo_capitulo(c['numero'], c['titulo'])}"} for c in sorted(_todos(raiz), key=lambda c: (c["obra"] or "", _ordem(c)))
+            if c["rel"] in prontos and not _concluido(c)]
 
 
 # --------------------------------------------------------------------------- exportar
@@ -169,6 +206,29 @@ def _ler_linha(s: str) -> Optional[tuple]:
     return m.group(1).lower(), m.group(2), " ".join(texto.split())
 
 
+def _normal(t: str) -> str:
+    return " ".join(re.sub(r"[*_`#>]+", " ", t).casefold().split())
+
+
+def _solto(t: str) -> str:
+    """Só letras e números, sem caixa: para comparar a fala recebida com o original."""
+    return "".join(ch for ch in t.casefold() if ch.isalnum())
+
+
+_INTRO_N = _normal(INTRODUCAO)
+_INTRO_LINHAS = {_normal(l) for l in INTRODUCAO.splitlines() if l.strip()}
+_PARTE = re.compile(r"^\(?\s*esta é a parte \d+ de \d+")
+
+
+def _e_introducao(s: str) -> bool:
+    """Linha da introdução de instruções (colada de volta junto com a resposta): nunca é fala nem erro de estrutura."""
+    n = _normal(s)
+    return bool(n) and (n in _INTRO_LINHAS or bool(_PARTE.match(n)) or (len(n) >= 12 and n in _INTRO_N))
+
+
+LIMITE_IGUAIS = 0.6          # fração das falas (com letras) que voltou igual ao original: aí o texto colado não é uma tradução
+
+
 def _amostra(itens: Iterable[str], n: int = 12) -> List[str]:
     lista = list(itens)
     return lista[:n] + ([f"… e mais {len(lista) - n}"] if len(lista) > n else [])
@@ -179,13 +239,16 @@ def analisar(raiz: Path, conteudos: List[str]) -> Dict[str, Any]:
 
     Uma tradução é ACEITA só se: o código é de um capítulo preparado, o id existe nele, o texto não está vazio, a linha não foi
     quebrada, e o id não aparece duas vezes com traduções diferentes. Tudo o mais é relatado e ignorado."""
-    registros, estranhas = [], []
+    registros, estranhas, intro = [], [], 0
     for conteudo in conteudos:
         anterior = None
         for n, bruta in enumerate(str(conteudo).splitlines(), 1):
             s = bruta.strip()
             if not s or _DIVISOR.match(s):
                 anterior = None
+                continue
+            if _e_introducao(s) and not _LINHA.match(s):
+                intro += 1                                     # instrução da introdução: reconhecida e ignorada de propósito
                 continue
             lida = _ler_linha(s)
             if lida:
@@ -207,7 +270,7 @@ def analisar(raiz: Path, conteudos: List[str]) -> Dict[str, Any]:
         ocorrencias: Dict[str, List[Dict[str, Any]]] = {}
         for r in deles:
             ocorrencias.setdefault(r["id"], []).append(r)
-        novas, desconhecidos, duplicados, quebrados, vazios, repetidos_iguais = {}, [], [], [], [], 0
+        novas, desconhecidos, duplicados, quebrados, vazios, repetidos_iguais, iguais, com_letras = {}, [], [], [], [], 0, [], 0
         for i, rs in ocorrencias.items():
             if i not in esperados:
                 desconhecidos.append(i); continue
@@ -221,14 +284,23 @@ def analisar(raiz: Path, conteudos: List[str]) -> Dict[str, Any]:
             if ja.get(i, {}).get("t") == rs[0]["texto"]:
                 continue                                       # já importada igual: não conta de novo
             novas[i] = {"t": rs[0]["texto"], "h": esperados[i]["hash"]}
+        for i in novas:
+            if any(ch.isalpha() for ch in esperados[i]["fonte"]):
+                com_letras += 1
+                if _solto(novas[i]["t"]) == _solto(esperados[i]["fonte"]):
+                    iguais.append(i)
+        original_reenviado = bool(com_letras) and len(iguais) / com_letras >= LIMITE_IGUAIS
+        if original_reenviado:
+            novas = {}                                         # o texto original voltou sem tradução: nada deste capítulo entra
         cobertos = set(ja) | set(novas)
         faltam = [i for i in esperados if i not in cobertos]
         capitulos[cap["rel"]] = {
             "rel": cap["rel"], "rotulo": org.rotulo_capitulo(cap["numero"], cap["titulo"]), "esperados": len(esperados), "ja_importados": len(ja), "novas": len(novas),
             "faltam": faltam, "desconhecidos": desconhecidos, "duplicados": duplicados, "quebrados": quebrados, "vazios": vazios, "repetidos_iguais": repetidos_iguais,
+            "original_reenviado": original_reenviado, "iguais_ao_original": iguais,
             "completo": not faltam, "_novas": novas, "_pasta": cap["pasta"], "_textos": cap["textos"],
         }
-    return {"capitulos": capitulos, "linhas": len(registros), "linhas_fora_da_estrutura": _amostra(estranhas), "total_fora": len(estranhas), "codigos_desconhecidos": codigos_desconhecidos}
+    return {"capitulos": capitulos, "linhas": len(registros), "linhas_fora_da_estrutura": _amostra(estranhas), "total_fora": len(estranhas), "codigos_desconhecidos": codigos_desconhecidos, "introducao_ignorada": intro}
 
 
 def gravar(analise: Dict[str, Any]) -> List[str]:
@@ -250,6 +322,6 @@ def gravar(analise: Dict[str, Any]) -> List[str]:
 
 def relatorio(analise: Dict[str, Any]) -> Dict[str, Any]:
     """A análise sem os campos internos, pronta para JSON."""
-    caps = [{k: (_amostra(v) if k in ("faltam", "desconhecidos", "duplicados", "quebrados", "vazios") else v) for k, v in c.items() if not k.startswith("_")} | {"qtd_faltam": len(c["faltam"])}
+    caps = [{k: (_amostra(v) if k in ("faltam", "desconhecidos", "duplicados", "quebrados", "vazios", "iguais_ao_original") else v) for k, v in c.items() if not k.startswith("_")} | {"qtd_faltam": len(c["faltam"])}
             for c in analise["capitulos"].values()]
-    return {"capitulos": caps, "linhas": analise["linhas"], "linhas_fora_da_estrutura": analise["linhas_fora_da_estrutura"], "total_fora": analise["total_fora"], "codigos_desconhecidos": analise["codigos_desconhecidos"]}
+    return {"capitulos": caps, "linhas": analise["linhas"], "linhas_fora_da_estrutura": analise["linhas_fora_da_estrutura"], "total_fora": analise["total_fora"], "codigos_desconhecidos": analise["codigos_desconhecidos"], "introducao_ignorada": analise["introducao_ignorada"]}

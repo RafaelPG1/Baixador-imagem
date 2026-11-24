@@ -184,7 +184,6 @@ class TarefaTraducao:
         self.prontos = 0                # capítulos do lote já traduzidos, salvos e liberados para leitura
         self.aguardando = 0             # motor "web": capítulos com os textos prontos, esperando a tradução importada
         self.capitulos = 0              # capítulos do lote
-        self._guardados: List[Dict[str, Any]] = []      # "aguardando" de lotes anteriores (motor web): continuam na lista até serem aplicados
         self.itens: List[Dict[str, Any]] = []   # fila mostrada na aba Traduções: {nome, rel, estado, etapa, feitas, total}
         self.inicio = 0.0
         self.fim = 0.0
@@ -207,10 +206,6 @@ class TarefaTraducao:
             if self.estado == "executando":
                 raise RuntimeError("Já existe uma tradução em andamento.")
             cfg = dict(cfg) if cfg else config.ler()
-            novos = {f"{Path(p).parent.name}/{Path(p).name}" for p in pastas}
-            atuais = {it["rel"] for it in self.itens if not it.get("oculto")}
-            antigos = {it["rel"]: it for it in [*(g for g in self._guardados if g["rel"] not in atuais), *self.itens] if it["estado"] == "aguardando" and not it.get("oculto") and it["rel"] not in novos}
-            self._guardados = [dict(it) for it in antigos.values()]    # preparar outro capítulo não pode esconder os já preparados
             self.estado, self.log, self.feitas, self.total = "executando", [], 0, ESCALA
             self.modo, self.avisos = cfg["motor"], []
             self.prontos, self.capitulos, self.aguardando = 0, len(pastas), 0
@@ -532,7 +527,7 @@ class TarefaTraducao:
                 "log": self.log[desde_log:], "log_total": len(self.log), "resumo": self.resumo,
                 "prontos": self.prontos, "capitulos": self.capitulos, "aguardando": self.aguardando, "modo": self.modo,
                 "cancelando": self.estado == "executando" and self._parar.is_set(), "avisos": list(self.avisos),
-                "itens": [dict(i) for i in self.itens if not i.get("oculto")] + [dict(i) for i in self._guardados if not any(i["rel"] == j["rel"] and not j.get("oculto") for j in self.itens)], "inicio": self.inicio, "fim": self.fim, "agora": time.time(),
+                "itens": [dict(i) for i in self.itens if not i.get("oculto")], "inicio": self.inicio, "fim": self.fim, "agora": time.time(),
                 "dependencias": disponibilidade(),
             }
 

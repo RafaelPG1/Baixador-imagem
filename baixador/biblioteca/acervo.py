@@ -64,7 +64,7 @@ def listar(raiz: Path) -> Dict[str, Any]:
             {
                 "rel": c["rel"], "numero": c["numero"], "titulo": c["titulo"],
                 "rotulo": org.rotulo_capitulo(c["numero"], c["titulo"]) if c["numero"] is not None or not c["antigo"] else c["rel"],
-                "imagens": len(c["nomes"]), "traduzido": c["traduzido"], "incompleta": c["incompleta"], "revisar": c["revisar"], "antigo": c["antigo"],
+                "imagens": len(c["nomes"]), "traduzido": c["traduzido"], "incompleta": c["incompleta"], "baixa_incompleta": c["baixa_incompleta"], "revisar": c["revisar"], "antigo": c["antigo"],
                 "capa": c["nomes"][0], "quando": c["quando"], "lido": c["rel"] in ja_lidos,
             }
             for c in g["capitulos"]

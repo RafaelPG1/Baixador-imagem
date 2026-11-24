@@ -245,10 +245,12 @@ def caminho_relativo(obra: Optional[str], numero: Optional[str], titulo: Optiona
     return f"{obra or SEM_OBRA}/{nome_pasta_capitulo(numero, titulo)}"
 
 
-def gravar_meta(pasta: Path, obra: str, numero: Optional[str], titulo: str, url: str = "") -> None:
+def gravar_meta(pasta: Path, obra: str, numero: Optional[str], titulo: str, url: str = "", incompleto: bool = False) -> None:
     dados = {"obra": limpar_nome(obra, 80), "numero": normalizar_numero(numero), "titulo": limpar_nome(titulo, 80)}
     if url:
         dados["url"] = str(url)[:500]
+    if incompleto:
+        dados["download_incompleto"] = True                  # cancelado ou com falhas: o capítulo não pode passar por baixado
     try:
         (Path(pasta) / NOME_META).write_text(json.dumps(dados, ensure_ascii=False, indent=1), encoding="utf-8")
     except OSError:

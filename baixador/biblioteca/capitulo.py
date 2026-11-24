@@ -130,6 +130,7 @@ def _varrer(raiz: Path) -> List[Dict[str, Any]]:
         c = _contagens(a["pasta"]) if a["traduzido"] else {}
         a["incompleta"] = c.get("erro", 0)                    # falas que o motor não conseguiu traduzir
         a["revisar"] = c.get("revisar", 0)                    # falas que a tradução ou o OCR marcaram para revisão
+        a["baixa_incompleta"] = bool(org.ler_meta(a["pasta"], copiar=False).get("download_incompleto"))   # download cancelado ou com falhas
         try:
             a["quando"] = a["pasta"].stat().st_mtime
         except OSError:

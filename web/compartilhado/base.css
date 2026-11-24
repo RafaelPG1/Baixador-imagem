@@ -441,3 +441,5 @@ figure.mini .abaixo { display: block; width: 100%; border: 0; border-top: 1px so
 .cel-seguranca { display: flex; justify-content: center; text-align: center; align-items: center; gap: 16px; flex-wrap: wrap; }
 .cel-seguranca .nota { margin: 0; max-width: 62ch; }
 @media (max-width: 760px) { .cel-cartoes { grid-template-columns: 1fr; } .cel-cartao { padding: 20px; } }
+.linha-limite { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.linha-limite input[type=number] { width: 84px; }

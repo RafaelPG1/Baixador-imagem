@@ -25,7 +25,7 @@
   function abrir(obra, preselecionados = new Set()) {
     if (dlg) dlg.remove();
     dlg = h('dialog', 'webia'); dlg.setAttribute('aria-label', 'Tradução com IA na web');
-    const estado = new Map();                                            // rel → {textos, importados, completo}
+    const estado = new Map(); let linhas = [];                           // só os capítulos que ainda precisam de tradução (vêm do servidor)                                            // rel → {textos, importados, completo}
     const marcados = new Set(), jaVistos = new Set();
     preselecionados.forEach((r) => marcados.add(r));
     let gerados = [];                                                    // arquivos exportados (para copiar/baixar)
@@ -39,8 +39,8 @@
     const lista = h('div', 'webia-lista'); lista.setAttribute('role', 'group'); lista.setAttribute('aria-label', 'Capítulos');
     const resumoSel = h('span', 'nota num'), preparo = h('p', 'nota');
     const acoesCaps = h('div', 'webia-linha');
-    const btnTodos = btn('Selecionar todos', 'pequeno', () => { const todos = obra.capitulos.length === marcados.size; marcados.clear(); if (!todos) obra.capitulos.forEach((c) => marcados.add(c.rel)); desenharLista(); });
-    let ocupado = false; const emFila = new Set();                   // preparação em andamento: não deixa pedir de novo
+    const btnTodos = btn('Selecionar todos', 'pequeno', () => { const todos = linhas.length === marcados.size; marcados.clear(); if (!todos) linhas.forEach((c) => marcados.add(c.rel)); desenharLista(); });
+    let carregou = false, ocupado = false; const emFila = new Set();                   // preparação em andamento: não deixa pedir de novo
     const novos = () => [...marcados].filter((r) => !estado.get(r)?.textos && !emFila.has(r));
     const btnPreparar = btn('Preparar textos dos selecionados', 'principal pequeno', async () => {
       const rels = novos();
@@ -53,11 +53,12 @@
 
     function desenharLista() {
       const topo = lista.scrollTop;
-      lista.replaceChildren(...obra.capitulos.slice().reverse().map((c) => {
+      if (!linhas.length) { lista.replaceChildren(h('p', 'nota vazio', carregou ? 'Todos os capítulos desta obra já estão traduzidos.' : 'Carregando…')); resumo(); return; }
+      lista.replaceChildren(...linhas.slice().reverse().map((c) => {
         const e = estado.get(c.rel), l = h('label', 'webia-cap');
         const i = h('input'); i.type = 'checkbox'; i.checked = marcados.has(c.rel);
         i.addEventListener('change', () => { if (i.checked) marcados.add(c.rel); else marcados.delete(c.rel); resumo(); });
-        const t = !e?.textos && emFila.has(c.rel) ? 'preparando…' : e?.textos ? `${e.importados}/${e.textos} traduzidos` + (e.completo ? ' · completo' : '') : 'textos não preparados';
+        const t = !e?.textos && emFila.has(c.rel) ? 'preparando…' : e?.textos ? `${e.importados}/${e.textos} traduzidos` + (e.completo ? ' · completo' : '') : (e?.incompleta ? `${e.incompleta} fala(s) com erro · preparar de novo` : 'textos não preparados');
         l.append(i, h('span', 'nome', c.numero != null && c.numero !== '' ? 'Cap. ' + c.numero : c.rotulo), h('span', 'est' + (e?.textos ? (e.completo ? ' ok' : ' ativo') : ''), t));
         return l;
       }));
@@ -76,7 +77,8 @@
       } catch (_) {}
       try {
         const r = await chamar('/api/web/capitulos', {obra: obra.nome});
-        estado.clear(); r.capitulos.forEach((c) => { estado.set(c.rel, c); if (c.textos && !jaVistos.has(c.rel)) { jaVistos.add(c.rel); marcados.add(c.rel); } });
+        estado.clear(); linhas = r.capitulos; carregou = true; [...marcados].forEach((m) => { if (!r.capitulos.some((c) => c.rel === m)) marcados.delete(m); });
+        r.capitulos.forEach((c) => { estado.set(c.rel, c); if (c.textos && !jaVistos.has(c.rel)) { jaVistos.add(c.rel); marcados.add(c.rel); } });
         limite.value = limite.value || r.limite_padrao; desenharLista(); gerarAgora();
       } catch (e) { /* janela fechada ou servidor ocupado: tenta na próxima */ }
     }
@@ -131,8 +133,12 @@
       const textos = await conteudos();
       if (!textos.length) { aviso('Cole o texto traduzido ou escolha os arquivos TXT.'); return; }
       let r; try { r = await chamar('/api/web/importar', {obra: obra.nome, textos, gravar}); } catch (e) { aviso(e.message); return; }
+      seq++; final.textContent = ''; final.className = 'nota';
       mostrar(r, gravar);
-      if (gravar) { aviso(r.iniciou ? `${r.iniciou} capítulo(s) completo(s): terminando a tradução (aba Traduções).` : (r.aviso || 'Traduções importadas.')); if (r.iniciou) document.dispatchEvent(new CustomEvent('traducao-iniciada')); atualizar(); }
+      if (!gravar) return;
+      atualizar();
+      if (r.aviso) { final.className = 'nota aviso'; final.textContent = r.aviso; }
+      if (r.aplicando?.length && r.iniciou) { document.dispatchEvent(new CustomEvent('traducao-iniciada')); confirmar(r.aplicando, Object.fromEntries(r.relatorio.capitulos.map((c) => [c.rel, c.rotulo]))); }
     };
     const escolher = btn('Escolher arquivos TXT…', '', () => arq.click());
     const acoesImp = h('div', 'webia-linha');
@@ -140,21 +146,49 @@
     sImp.append(area, acoesImp, relatorio);
 
     function mostrar(r, gravou) {
-      const rel = r.relatorio, linhas = [];
-      const caps = rel.capitulos;
-      if (!caps.length) linhas.push(['erro', 'Nenhum identificador conhecido foi encontrado. Confira se colou o texto devolvido pela IA, com as linhas [código:fala] intactas.']);
+      const rel = r.relatorio, linhasR = [], caps = rel.capitulos;
+      const novas = caps.reduce((n, c) => n + c.novas, 0);
+      const cab2 = `${rel.linhas} linha(s) de fala reconhecida(s)` + (rel.introducao_ignorada ? ` · ${rel.introducao_ignorada} linha(s) da introdução de instruções reconhecida(s) e ignorada(s)` : '') + (rel.total_fora ? ` · ${rel.total_fora} linha(s) fora da estrutura ignorada(s)` : '');
+      linhasR.push(['nota', cab2]);
+      if (!caps.length) linhasR.push(['erro', 'Nada foi importado: nenhum identificador conhecido foi encontrado. Confira se colou o texto devolvido pela IA, com as linhas [código:fala] intactas.']);
       caps.forEach((c) => {
+        if (c.original_reenviado) { linhasR.push(['erro', `${c.rotulo}: REJEITADO — o texto colado é o original em inglês, sem tradução (${c.iguais_ao_original.length} falas iguais ao original). Nada deste capítulo foi importado.`]); return; }
         const ok = c.completo && !c.desconhecidos.length && !c.duplicados.length && !c.quebrados.length && !c.vazios.length;
-        linhas.push([ok ? 'ok' : (c.completo ? 'aviso' : 'erro'), `${c.rotulo}: ${c.ja_importados + c.novas}/${c.esperados} traduzidos${gravou ? '' : ` (${c.novas} novos)`}` + (c.completo ? ' · completo' : ` · faltam ${c.qtd_faltam}`)]);
-        const det = (rot, v) => { if (v.length) linhas.push(['nota', `   ${rot}: ${v.join(', ')}`]); };
-        det('faltam', c.faltam); det('identificador desconhecido', c.desconhecidos); det('duplicados com textos diferentes (não usados)', c.duplicados);
-        det('linha quebrada ou com texto extra (não usados)', c.quebrados); det('sem texto traduzido', c.vazios);
+        linhasR.push([ok ? 'ok' : (c.completo ? 'aviso' : 'erro'), `${c.rotulo}: ${c.ja_importados + c.novas}/${c.esperados} traduzidos${gravou ? '' : ` (${c.novas} novos)`}` + (c.completo ? ' · todas as falas têm tradução' : ` · faltam ${c.qtd_faltam}`)]);
+        const det = (rot, v) => { if (v.length) linhasR.push(['nota', `   ${rot}: ${v.join(', ')}`]); };
+        det('faltam', c.faltam); det('identificador desconhecido (ignorado)', c.desconhecidos); det('duplicados com textos diferentes (ignorados)', c.duplicados);
+        det('linha quebrada ou com texto extra (ignorada)', c.quebrados); det('sem texto traduzido (ignorada)', c.vazios);
+        if (c.iguais_ao_original.length) linhasR.push(['aviso', `   iguais ao original (aceitas, confira se deviam mudar): ${c.iguais_ao_original.join(', ')}`]);
       });
-      if (rel.codigos_desconhecidos.length) linhas.push(['aviso', `Códigos de capítulo desconhecidos (ignorados): ${rel.codigos_desconhecidos.join(', ')}. Prepare os textos e exporte de novo.`]);
-      if (rel.total_fora) linhas.push(['nota', `${rel.total_fora} linha(s) fora da estrutura foram ignoradas: ${rel.linhas_fora_da_estrutura.join(' | ')}`]);
-      const incompletos = caps.filter((c) => !c.completo).length;
-      linhas.push(['nota', !gravou ? 'Verificação feita: nada foi gravado.' : incompletos ? `Traduções válidas guardadas. ${incompletos} capítulo(s) ainda incompleto(s): importe as falas que faltam (listadas acima) e ele é aplicado sozinho.` : 'Todas as falas traduzidas: aplicando nos capítulos.']);
-      relatorio.replaceChildren(...linhas.map(([cl, t]) => h('p', 'nota ' + cl, t)));
+      if (rel.codigos_desconhecidos.length) linhasR.push(['aviso', `Códigos de capítulo desconhecidos (ignorados): ${rel.codigos_desconhecidos.join(', ')}. Prepare os textos e exporte de novo.`]);
+      if (rel.total_fora) linhasR.push(['nota', `Fora da estrutura (ignoradas): ${rel.linhas_fora_da_estrutura.join(' | ')}`]);
+      const incompletos = caps.filter((c) => !c.completo);
+      if (!gravou) linhasR.push(['nota', 'Verificação feita: nada foi gravado.']);
+      else if (!novas && !caps.some((c) => c.ja_importados)) linhasR.push(['erro', 'Nada foi importado: nenhuma tradução válida foi encontrada no texto colado.']);
+      else if (incompletos.length) linhasR.push(['aviso', `Traduções válidas guardadas (${novas} nova(s)). ${incompletos.length} capítulo(s) ainda incompleto(s): importe as falas que faltam e ele é aplicado sozinho. Nada foi aplicado neles.`]);
+      relatorio.replaceChildren(...linhasR.map(([cl, t]) => h('p', 'nota ' + cl, t)));
+    }
+    const final = h('p', 'nota'); final.setAttribute('role', 'status'); relatorio.after(final);
+    let seq = 0;
+    async function confirmar(rels, rotulos) {                              // só diz "aplicado" depois de conferir no capítulo
+      const meu = ++seq, nome = (r) => rotulos[r] || r;
+      final.className = 'nota aviso'; final.textContent = `Aplicando ${rels.length} capítulo(s)… aguarde a confirmação.`;
+      let ultimo = {}, parou = 0;
+      for (let k = 0; k < 400 && meu === seq && dlg; k++) {
+        await new Promise((r) => setTimeout(r, 1500));
+        try {
+          ultimo = (await chamar('/api/web/aplicados', {rels})).aplicados;
+          const t = await ler('/api/traducao/estado', '&log=0');
+          if (rels.every((r) => ultimo[r])) break;
+          parou = t.estado === 'executando' ? 0 : parou + 1;
+          if (parou >= 3) break;                                          // a tarefa acabou e o capítulo não ficou aplicado
+        } catch (_) {}
+      }
+      if (meu !== seq) return;
+      const ok = rels.filter((r) => ultimo[r]), mal = rels.filter((r) => !ultimo[r]);
+      final.className = 'nota ' + (mal.length ? (ok.length ? 'aviso' : 'erro') : 'ok');
+      final.textContent = (ok.length ? `Concluído e aplicado: ${ok.map(nome).join(', ')}. ` : '') + (mal.length ? `NÃO aplicado: ${mal.map(nome).join(', ')} — veja a aba Traduções; as traduções importadas continuam guardadas, clique em Importar de novo para tentar outra vez.` : 'Os capítulos já podem ser lidos.');
+      atualizar();
     }
 
     dlg.append(cab, nota, sCaps, sExp, sImp);

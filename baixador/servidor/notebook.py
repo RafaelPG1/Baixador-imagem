@@ -320,7 +320,14 @@ class Manipulador(BaseHTTPRequestHandler):
 
         if caminho == "/api/traducao/estado":
             tarefa: TarefaTraducao = self.server.traducao  # type: ignore[attr-defined]
-            return self._json(200, tarefa.instantaneo(max(self._numero(consulta, "log", 0), 0)))
+            estado = tarefa.instantaneo(max(self._numero(consulta, "log", 0), 0))
+            # capítulos com textos preparados para a IA web vêm do disco: não somem entre lotes nem ao reabrir o programa
+            presentes = {i.get("rel") for i in estado["itens"]}
+            estado["itens"] = estado["itens"] + [
+                {"nome": a["nome"], "rel": a["rel"], "estado": "aguardando", "etapa": "", "feitas": 1, "total": 1}
+                for a in web_ia.aguardando_da_biblioteca(self.server.raiz) if a["rel"] not in presentes  # type: ignore[attr-defined]
+            ]
+            return self._json(200, estado)
 
         if caminho == "/api/traducao/config":
             return self._json(200, {**config.ler(), "motores": config.MOTORES, "modelos": config.MODELOS, "idiomas": executor.IDIOMAS})
@@ -622,12 +629,19 @@ class Manipulador(BaseHTTPRequestHandler):
         lote = str(dados.get("lote", ""))
         cfg = {**config.ler(), "motor": "web"} if dados.get("motor") == "web" else None     # só esta tarefa usa o motor "web"; a configuração geral não muda
         try:
+            if dados.get("motor") == "web":                              # preparar só o que ainda precisa de tradução
+                alvo = [str(r)[:300] for r in dados["rels"]] if isinstance(dados.get("rels"), list) else []
+                feitos = web_ia.ja_concluidos(raiz, alvo)
+                if alvo and len(feitos) == len(set(alvo)):
+                    return self._negar(409, "Estes capítulos já têm tradução concluída: " + ", ".join(feitos[:5]))
+                if feitos:
+                    dados = {**dados, "rels": [r for r in alvo if r not in feitos]}
             if lote in ("todos", "pendentes"):
                 obra = str(dados.get("obra", ""))[:120]
                 lista = [
                     raiz / c["rel"] for o in biblioteca.listar(raiz)["obras"]
                     if not obra or organizacao._chave(o["nome"]) == organizacao._chave(obra)
-                    for c in o["capitulos"] if lote == "todos" or not c["traduzido"]
+                    for c in o["capitulos"] if (lote == "todos" and dados.get("motor") != "web") or not c["traduzido"] or (dados.get("motor") == "web" and c["incompleta"])
                 ]
                 if not lista:
                     return self._negar(404, "Nenhum capítulo para traduzir.")
@@ -683,7 +697,11 @@ class Manipulador(BaseHTTPRequestHandler):
                 resposta["aplicado"] = True
                 resposta.update(self._concluir_web(raiz, tarefa, completos))
             resposta["relatorio"] = web_ia.relatorio(analise)
+            resposta["aplicando"] = [c["rel"] for c in analise["capitulos"].values() if c["completo"]] if dados.get("gravar") else []
             return self._json(200, resposta)
+        if rota == "aplicados":                                  # confirmação: a tradução está mesmo aplicada no capítulo?
+            rels = [str(r)[:300] for r in dados.get("rels", [])] if isinstance(dados.get("rels"), list) else []
+            return self._json(200, {"aplicados": web_ia.aplicados(raiz, rels)})
         if rota == "aplicar":                                    # termina os capítulos que já têm todas as traduções
             rels = dados.get("rels") if isinstance(dados.get("rels"), list) else [c["rel"] for c in web_ia.estado_dos_capitulos(raiz, obra) if c["completo"]]
             validos = {c["rel"] for c in web_ia.estado_dos_capitulos(raiz, obra) if c["completo"]}
@@ -749,6 +767,14 @@ class Manipulador(BaseHTTPRequestHandler):
             return self._negar(500, f"Não foi possível abrir a página: {erro}")
         return self._json(200, {"ok": True})
 
+    @staticmethod
+    def _limite_dos_dados(dados: Dict[str, Any]) -> int:
+        """Quantos capítulos baixar no automático (0 = sem limite, usado só pelo "Atualizar"). Valor inválido é erro, não 0 silencioso."""
+        valor = dados.get("limite", 0)
+        if isinstance(valor, bool) or not isinstance(valor, (int, float)) or valor != int(valor) or not 0 <= valor <= 10000:
+            raise ValueError("Informe a quantidade de capítulos como um número inteiro.")
+        return int(valor)
+
     def _post_manual(self, manual: SessaoManual, acao: str, dados: Dict[str, Any]) -> None:
         try:
             if acao == "abrir":
@@ -802,9 +828,10 @@ class Manipulador(BaseHTTPRequestHandler):
                     modo_busca="carregamento" if str(dados.get("modo_busca", "")) == "carregamento" else "rapido",
                     ao_concluir=ao_concluir,
                     pular_primeiro=bool(dados.get("atualizar", False)),
+                    limite=self._limite_dos_dados(dados),
                 )
             elif acao == "continuar":
-                manual.definir_continuar(bool(dados.get("ativo", False)))
+                manual.definir_continuar(bool(dados.get("ativo", False)), self._limite_dos_dados(dados) if "limite" in dados else None)
             elif acao == "procurar":
                 espera = dados.get("espera", 30)
                 if isinstance(espera, bool) or not isinstance(espera, (int, float)):
