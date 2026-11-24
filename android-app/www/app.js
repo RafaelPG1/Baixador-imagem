@@ -100,6 +100,22 @@
     try { var c = JSON.parse(lembrar(CHAVE_CFG) || 'null'); return c && c.base && c.chave ? c : null; } catch (_) { return null; }
   }
   function nomeHost(base) { return String(base).replace(/^https?:\/\//, ''); }
+  /* A conexão fica em dois lugares: localStorage e SharedPreferences nativo (o WebView pode perder o localStorage). Uma cópia refaz a outra. */
+  function nativoRede() { return semNativo ? null : plugin('SalvarZip'); }
+  var semNativo = false;                                        // plugin antigo (APK sem os métodos novos): cai no fetch do WebView
+  function guardarCfg(c) {
+    var j = JSON.stringify(c); guardar(CHAVE_CFG, j);
+    var S = nativoRede(); if (S) S.guardarConfig({ valor: j }).catch(function () {});
+  }
+  function esquecerCfg() { esquecer(CHAVE_CFG); var S = nativoRede(); if (S) S.apagarConfig().catch(function () {}); }
+  async function restaurarCfg() {
+    var S = nativoRede(); if (!S) return;
+    try {
+      var r = await S.lerConfig(), nativa = r && r.valor;
+      if (!cfg() && nativa) guardar(CHAVE_CFG, nativa);          // o WebView perdeu: volta do nativo, sem parear de novo
+      else if (cfg() && !nativa) S.guardarConfig({ valor: lembrar(CHAVE_CFG) }).catch(function () {});
+    } catch (_) { semNativo = true; }
+  }
   function setEstado(ok, texto) { var e = $('estado'); e.className = 'estado ' + (ok ? 'ok' : 'ruim'); e.textContent = texto; }
 
   /* Aceita o endereço completo do QR (https://nome.ts.net/?k=CHAVE) ou "nome.ts.net CHAVE". */
@@ -119,45 +135,122 @@
     return { base: base, chave: chave };
   }
 
-  /* Testa o caminho em 3 etapas e diz qual trava (ajuda a separar rede/Tailscale de pré-verificação CORS). A chave nunca é mostrada. */
+  /* Diagnóstico por etapa: sem chave (um 401 já prova que o notebook foi alcançado) e com a chave. Mostra o código real da falha. A chave nunca é mostrada. */
   async function diagnosticar(c) {
-    var linhas = [];
-    async function etapa(nome, url, init) {
-      var ctl = new AbortController(), t0 = Date.now(), fim = setTimeout(function () { ctl.abort(); }, 10000);
-      init = init || {}; init.signal = ctl.signal; init.cache = 'no-store';
-      try { var r = await fetch(url, init); linhas.push(nome + ': HTTP ' + r.status + ' (' + (Date.now() - t0) + ' ms)'); }
-      catch (e) { linhas.push(nome + ': ' + (ctl.signal.aborted ? 'sem resposta em 10 s' : 'falhou (' + (e && e.name) + ': ' + (e && e.message) + ')')); }
-      finally { clearTimeout(fim); }
+    var linhas = [], via = nativoRede() ? 'nativo' : 'WebView';
+    async function etapa(nome, comChave) {
+      var t0 = Date.now();
+      try {
+        var x = await umaTentativa(comChave ? c : { base: c.base, chave: '-' }, '/api/app/ping', { limite: 10000 });
+        linhas.push(nome + ': HTTP ' + x.status + ' (' + (Date.now() - t0) + ' ms)');
+      } catch (e) { linhas.push(nome + ': ' + (e.codigo || 'erro') + ' — ' + e.message); }
     }
-    await etapa('1 sem chave', c.base + '/api/app/ping');
-    await etapa('2 chave na URL', c.base + '/api/app/ping?k=' + encodeURIComponent(c.chave));
-    await etapa('3 chave no cabeçalho', c.base + '/api/app/ping', { headers: { Authorization: 'Bearer ' + c.chave } });
-    return linhas.join('\n');
+    await etapa('1 alcança o notebook', false);
+    await etapa('2 chave aceita', true);
+    return 'Via ' + via + '\n' + linhas.join('\n');
   }
 
+  /* ---- rede: HTTP nativo quando há (sem CORS/regras de rede local do WebView) e fetch como reserva ---- */
+  var ESPERA = function (ms, sinal) { return new Promise(function (ok, err) { var t = setTimeout(ok, ms); if (sinal) sinal.addEventListener('abort', function () { clearTimeout(t); var e = new Error('Cancelado.'); e.name = 'AbortError'; err(e); }); }); };
+  function falha(codigo, base, detalhe) {
+    var host = nomeHost(base), m;
+    if (codigo === 'DNS') m = 'O celular não achou “' + host + '”. O Tailscale está ligado no celular? Confira também se o nome .ts.net salvo no notebook é este.';
+    else if (codigo === 'TIMEOUT') m = 'O notebook não respondeu a tempo. Ele pode estar desligado, dormindo ou sem internet; com o Tailscale ligado nos dois, tente de novo.';
+    else if (codigo === 'RECUSADA') m = 'A conexão com o notebook foi recusada. No notebook, ligue “Leitura pelo celular” e rode o comando “tailscale serve” mostrado lá.';
+    else if (codigo === 'SEM_ROTA') m = 'Sem caminho até o notebook. Ligue o Tailscale no celular e no notebook.';
+    else if (codigo === 'SSL') m = 'O certificado HTTPS do Tailscale não foi aceito. No painel do Tailscale, ative “HTTPS Certificates” e rode “tailscale serve” de novo no notebook.';
+    else if (codigo === 'BAD_GATEWAY') m = 'O Tailscale respondeu, mas o programa do notebook não. Confira se “Leitura pelo celular” está ligada e se a porta do “tailscale serve” é a mostrada lá.';
+    else if (codigo === 'FETCH') m = 'O WebView bloqueou a chamada ao notebook (' + (detalhe || 'Failed to fetch') + '). Atualize o app; se continuar, confira o Tailscale nos dois aparelhos.';
+    else m = 'Falha de rede ao falar com o notebook' + (detalhe ? ' (' + detalhe + ')' : '') + '.';
+    var e = new Error(m); e.codigo = codigo; return e;
+  }
+  function erroNativo(e, base) {                                // erro do plugin (e.code) -> mensagem específica
+    var k = e && e.code;
+    if (/^HTTP_40[13]$/.test(k)) return Object.assign(new Error('Chave ou endereço recusado pelo notebook. Use “Parear de novo”.'), { codigo: 'CHAVE' });
+    if (/^HTTP_5/.test(k)) return falha('BAD_GATEWAY', base);
+    if (k === 'INCOMPLETO') return Object.assign(new Error('Download incompleto; tente de novo.'), { codigo: k });
+    return k ? falha(k, base, e.message) : e;
+  }
+  var TRANSITORIOS = { TIMEOUT: 1, REDE: 1, RECUSADA: 1, BAD_GATEWAY: 1, FETCH: 1 };
+  async function umaTentativa(c, caminho, o) {
+    var S = nativoRede(), cab = { Authorization: 'Bearer ' + c.chave };
+    if (S) {
+      try {
+        var r = await S.requisitar({ url: c.base + caminho, headers: cab, limite: o.limite, binario: !!o.binario });
+        return { status: r.status, corpo: r.corpo, tipo: r.tipo, binario: !!o.binario };
+      } catch (e) {
+        if (e && e.code === 'UNIMPLEMENTED') semNativo = true;
+        else throw falha(e && e.code, c.base, e && e.message);
+      }
+    }
+    var ctl = new AbortController(), estourou = false, fim = o.limite > 0 ? setTimeout(function () { estourou = true; ctl.abort(); }, o.limite) : null;
+    if (o.signal) o.signal.addEventListener('abort', function () { ctl.abort(); });
+    try {
+      var f = await fetch(c.base + caminho, { headers: cab, signal: ctl.signal, cache: 'no-store' });
+      return { status: f.status, resposta: f, binario: !!o.binario };
+    } catch (e) { throw falha(estourou ? 'TIMEOUT' : 'FETCH', c.base, e && e.message); }
+    finally { if (fim) clearTimeout(fim); }
+  }
+  function enxergar(x) {
+    return {
+      status: x.status, ok: x.status >= 200 && x.status < 300,
+      json: function () { return x.resposta ? x.resposta.json() : Promise.resolve(JSON.parse(x.corpo || 'null')); },
+      blob: function () {
+        if (x.resposta) return x.resposta.blob();
+        var bin = atob(x.corpo || ''), v = new Uint8Array(bin.length); for (var i = 0; i < bin.length; i++) v[i] = bin.charCodeAt(i);
+        return Promise.resolve(new Blob([v], { type: x.tipo || 'application/octet-stream' }));
+      },
+      bruto: x.resposta,
+    };
+  }
+
+  /* Até 3 tentativas (1 s, 2 s) só para falha transitória; erro de chave/endereço (401/403/429) não repete. Nunca é infinito. */
   async function fetchAuth(caminho, opcoes) {
-    var c = (opcoes && opcoes.cfg) || cfg(); if (!c) throw new Error('Conecte ao notebook primeiro.');
-    var ctl = new AbortController(), limite = (opcoes && opcoes.limite) || 20000, estourou = false;
-    var id = limite > 0 ? setTimeout(function () { estourou = true; ctl.abort(); }, limite) : null;
-    var externo = opcoes && opcoes.signal;
-    if (externo) externo.addEventListener('abort', function () { ctl.abort(); });
-    var r;
-    try { r = await fetch(c.base + caminho, { headers: { Authorization: 'Bearer ' + c.chave }, signal: ctl.signal, cache: 'no-store' }); }
-    catch (e) {
-      if (externo && externo.aborted) { var ab = new Error('Cancelado.'); ab.name = 'AbortError'; throw ab; }
-      setEstado(false, 'sem conexão');
-      throw new Error(estourou ? 'O notebook demorou demais para responder.' : 'Não consegui falar com o notebook. Confira se o Tailscale está ligado no celular e no notebook, e se o notebook está ligado.');
-    } finally { if (id) clearTimeout(id); }
-    if (r.status === 401) { setEstado(false, 'chave recusada'); throw new Error('Chave recusada. No notebook, gere o QR de novo (aba Leitura pelo celular) e conecte outra vez.'); }
-    if (r.status === 403) { setEstado(false, 'recusado'); throw new Error('O notebook recusou o endereço. Confira se o nome .ts.net foi salvo na aba Leitura pelo celular e se o comando “tailscale serve” foi executado.'); }
-    if (r.status === 429) throw new Error('Muitas tentativas erradas. Aguarde um minuto.');
+    opcoes = opcoes || {};
+    var c = opcoes.cfg || cfg(); if (!c) throw new Error('Conecte ao notebook primeiro.');
+    var limite = opcoes.limite == null ? 20000 : opcoes.limite, tentativas = opcoes.tentativas || 3, x, erro;
+    for (var n = 0; n < tentativas; n++) {
+      if (opcoes.signal && opcoes.signal.aborted) { var ab = new Error('Cancelado.'); ab.name = 'AbortError'; throw ab; }
+      try {
+        x = await umaTentativa(c, caminho, { limite: limite, signal: opcoes.signal, binario: opcoes.binario });
+        if (x.status === 502 || x.status === 503 || x.status === 504) throw falha('BAD_GATEWAY', c.base);
+        erro = null; break;
+      } catch (e) {
+        if (e && e.name === 'AbortError') throw e;
+        erro = e;
+        if (!TRANSITORIOS[e.codigo] || n === tentativas - 1) break;
+        await ESPERA(1000 * Math.pow(2, n), opcoes.signal);
+      }
+    }
+    if (erro) { setEstado(false, 'sem conexão'); throw erro; }
+    var r = enxergar(x);
+    if (r.status === 401) { setEstado(false, 'chave recusada'); throw Object.assign(new Error('Chave recusada: o notebook gerou outra chave. No notebook, abra “Leitura pelo celular”, copie o QR atual e use “Parear de novo”.'), { codigo: 'CHAVE' }); }
+    if (r.status === 403) { setEstado(false, 'recusado'); throw Object.assign(new Error('O notebook recusou o endereço. Confira se o nome .ts.net foi salvo na aba Leitura pelo celular e se o comando “tailscale serve” foi executado.'), { codigo: 'HOST' }); }
+    if (r.status === 429) throw Object.assign(new Error('Muitas tentativas erradas. Aguarde um minuto.'), { codigo: 'BLOQUEIO' });
     if (!r.ok) { setEstado(false, 'erro ' + r.status); throw new Error('O notebook respondeu erro ' + r.status + '.'); }
     setEstado(true, 'notebook conectado');
     return r;
   }
 
   async function baixarBlob(caminho, aoProgredir, signal) {
-    var r = await fetchAuth(caminho, { limite: 0, signal: signal });
+    var S = nativoRede(), c = cfg();
+    if (S && c && S.baixarParaCache) {                           // nativo: grava em arquivo e o WebView lê de lá (nada inteiro na memória do JS)
+      progressoNativo = aoProgredir; garantirOuvinte(S); var caminhoArq = null;
+      try {
+        var dl = await S.baixarParaCache({ url: c.base + caminho, headers: { Authorization: 'Bearer ' + c.chave }, id: caminho });
+        caminhoArq = dl.caminho;
+        var rr = await fetch(window.Capacitor.convertFileSrc('file://' + caminhoArq));
+        if (!rr.ok) throw new Error('Não consegui ler o download guardado.');
+        setEstado(true, 'notebook conectado');
+        return await rr.blob();
+      } catch (e) {
+        if (signal && signal.aborted) { var ab = new Error('Cancelado.'); ab.name = 'AbortError'; throw ab; }
+        if (e && e.code === 'UNIMPLEMENTED') semNativo = true;
+        else { setEstado(false, 'sem conexão'); throw erroNativo(e, c.base); }
+      } finally { progressoNativo = null; if (caminhoArq) S.apagarCache({ caminho: caminhoArq }).catch(function () {}); }
+    }
+    var r0 = await fetchAuth(caminho, { limite: 0, signal: signal, tentativas: 1 }), r = r0.bruto;
+    if (!r) return r0.blob();
     var total = parseInt(r.headers.get('Content-Length') || '0', 10);
     if (!r.body || !r.body.getReader) return r.blob();
     var leitor = r.body.getReader(), partes = [], recebido = 0;
@@ -230,9 +323,9 @@
       msg.className = 'msg'; msg.textContent = 'Testando conexão…'; scan.disabled = ir.disabled = true;
       try {
         var c = lerPareamento(texto);
-        var t0 = Date.now(), r = await fetchAuth('/api/app/ping', { cfg: c, limite: 15000 }), j = await r.json();
-        guardar(CHAVE_CFG, JSON.stringify(c)); cacheOnline = null; try { sessionStorage.removeItem('baixador-online'); } catch (_) {}
-        aviso('Conectado: ' + j.obras + ' obra(s) no notebook (' + (Date.now() - t0) + ' ms).'); location.hash = '#/';
+        var t0 = Date.now(), r = await fetchAuth('/api/app/ping', { cfg: c, limite: 15000, tentativas: 2 }), j = await r.json();
+        guardarCfg(c); cacheOnline = null; try { sessionStorage.removeItem('baixador-online'); } catch (_) {}
+        aviso('Conectado ao notebook (' + (Date.now() - t0) + ' ms).'); location.hash = '#/';
       } catch (e) {
         msg.className = 'msg'; msg.textContent = mensagemErro(e);
         try { var c2 = lerPareamento(texto); msg.textContent += '\n\nDiagnóstico…'; var d = await diagnosticar(c2); msg.style.whiteSpace = 'pre-wrap'; msg.textContent = mensagemErro(e) + '\n\nDiagnóstico:\n' + d; } catch (_) { }
@@ -296,7 +389,7 @@
       a.append(img, el('span', 'capa-nome', o.nome), el('span', 'capa-sub', o.capitulos.length + ' cap.' + (meus ? ' · ' + meus + ' baixado' + (meus === 1 ? '' : 's') : '')));
       grade.append(a);
       if (o.pasta && o.capa) {                                // capa, carregada depois (não trava a lista)
-        fetchAuth('/api/capa?p=' + enc(o.pasta) + '&v=' + (o.capa_v || 0)).then(function (r) { return r.blob(); }).then(function (b) {
+        fetchAuth('/api/capa?p=' + enc(o.pasta) + '&v=' + (o.capa_v || 0), { binario: true, tentativas: 1 }).then(function (r) { return r.blob(); }).then(function (b) {
           if (!vivo(eu)) return; var i = el('img'); i.alt = ''; i.src = url(b); img.replaceChildren(i);
         }).catch(function () {});
       }
@@ -517,11 +610,11 @@
       var testar = el('button', 'btn', 'Testar conexão'); testar.type = 'button';
       testar.addEventListener('click', async function () {
         testar.disabled = true; res.className = 'msg'; res.textContent = 'Testando…'; var t0 = Date.now();
-        try { var r = await fetchAuth('/api/app/ping', { limite: 15000 }), j = await r.json(); res.className = 'msg ok'; res.textContent = 'OK: ' + j.obras + ' obra(s), ' + (Date.now() - t0) + ' ms.'; }
+        try { var r = await fetchAuth('/api/app/ping', { limite: 15000 }), j = await r.json(); res.className = 'msg ok'; res.textContent = 'OK: notebook respondeu em ' + (Date.now() - t0) + ' ms.'; }
         catch (e) { res.className = 'msg'; res.textContent = mensagemErro(e); } finally { testar.disabled = false; }
       });
       var desc = el('button', 'btn perigo', 'Desconectar'); desc.type = 'button';
-      desc.addEventListener('click', function () { if (!confirm('Desconectar deste notebook? As obras já baixadas continuam no celular.')) return; esquecer(CHAVE_CFG); cacheOnline = null; try { sessionStorage.removeItem('baixador-online'); } catch (_) {} setEstado(false, ''); aviso('Desconectado.'); rotear(); });
+      desc.addEventListener('click', function () { if (!confirm('Desconectar deste notebook? As obras já baixadas continuam no celular.')) return; esquecerCfg(); cacheOnline = null; try { sessionStorage.removeItem('baixador-online'); } catch (_) {} setEstado(false, ''); aviso('Desconectado.'); rotear(); });
       linha.append(testar, desc);
     }
     var par = el('a', 'btn' + (c ? '' : ' principal'), c ? 'Parear de novo' : 'Conectar'); par.href = '#/conectar'; linha.append(par);
@@ -589,5 +682,15 @@
       location.hash = (cfg() && navigator.onLine !== false ? '#/online/' : '#/obra/') + encodeURIComponent(q.get('obra'));
     }
   })();
-  rotear();
+  /* Recuperação sem laço: ao voltar para o app ou quando a rede volta, se a conexão estava ruim, tenta UMA vez (no máximo a cada 5 s). */
+  var ultimaRecuperacao = 0;
+  function recuperar() {
+    var e = $('estado'), agora = Date.now();
+    if (!cfg() || !e || !/ruim/.test(e.className) || agora - ultimaRecuperacao < 5000) return;
+    if (/^#\/(conectar|ajustes|ler|obra|baixadas)/.test(location.hash || '')) return;
+    ultimaRecuperacao = agora; rotear();
+  }
+  window.addEventListener('online', recuperar);
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) recuperar(); });
+  restaurarCfg().then(rotear, rotear);
 })();

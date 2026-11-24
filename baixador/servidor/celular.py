@@ -242,7 +242,7 @@ class _Manipulador(BaseHTTPRequestHandler):
             corpo = ler_web("celular/leitura.html").replace(
                 b"</head>", b"<script>history.replaceState(null,'','/')</script></head>", 1)
             return self._enviar(200, "text/html; charset=utf-8", corpo, extras=extras)
-        if "k" in consulta:                                    # outros caminhos: tira a chave do endereço
+        if "k" in consulta and not caminho.startswith("/api/"):   # páginas: tira a chave do endereço (a API responde direto)
             resto = {k: v for k, v in consulta.items() if k != "k"}
             destino = caminho + (("?" + urlencode(resto, doseq=True)) if resto else "")
             self.close_connection = True
@@ -266,7 +266,7 @@ class _Manipulador(BaseHTTPRequestHandler):
                 return self._json(404, {"erro": "Sem capa."})
             return self._enviar(200, achada[1], achada[0], cache="private, max-age=300")
         if caminho == "/api/app/ping":                         # o app testa a conexão e a chave
-            return self._json(200, {"ok": True, "api": 1, "obras": len(biblioteca.listar(servidor.raiz)["obras"])})
+            return self._json(200, {"ok": True, "api": 2})      # barato de propósito: não varre a biblioteca (a lista vem de /api/biblioteca)
         if caminho == "/api/app/exportar":                     # ZIP de capítulos escolhidos (?rel=… repetível) ou de uma obra (?obra=)
             rels, obra = consulta.get("rel", []), (consulta.get("obra") or [""])[0]
             if not (rels or obra):

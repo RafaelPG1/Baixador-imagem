@@ -20,7 +20,12 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.util.HashMap;
 import java.util.Iterator;
+import java.util.Map;
+import android.content.Context;
+import android.content.SharedPreferences;
+import android.util.Base64;
 
 /**
  * Baixa um ZIP do notebook (HTTPS, com o cabeçalho Authorization) direto para Download/Baixador/&lt;pasta&gt;/ no celular.
@@ -235,5 +240,150 @@ public class SalvarZipPlugin extends Plugin {
                 }
             }
         ).start();
+    }
+
+    // ------------------------------------------------------------------ rede nativa (fora do WebView)
+
+    private Map<String, String> cabecalhosDe(PluginCall call) {
+        Map<String, String> mapa = new HashMap<>();
+        JSObject h = call.getObject("headers", new JSObject());
+        Iterator<String> chaves = h.keys();
+        while (chaves.hasNext()) {
+            String chave = chaves.next();
+            mapa.put(chave, h.getString(chave));
+        }
+        return mapa;
+    }
+
+    private static void rejeitar(PluginCall call, Rede.Falha f) {
+        call.reject(f.getMessage(), f.codigo);
+    }
+
+    /** GET com o corpo na memória (JSON; imagem pequena em base64 com binario=true). Qualquer status HTTP volta em "status". */
+    @PluginMethod
+    public void requisitar(final PluginCall call) {
+        final String endereco = call.getString("url");
+        final boolean binario = Boolean.TRUE.equals(call.getBoolean("binario", false));
+        final int limite = call.getInt("limite", 20000);
+        final Map<String, String> cabecalhos = cabecalhosDe(call);
+        if (endereco == null || !endereco.startsWith("https://")) {
+            call.reject("Endereço inválido: só HTTPS.", "ENDERECO");
+            return;
+        }
+        new Thread(
+            new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        Rede.Resposta r = Rede.obter(endereco, cabecalhos, limite, 32L * 1024 * 1024);
+                        JSObject saida = new JSObject();
+                        saida.put("status", r.status);
+                        saida.put("tipo", r.tipo);
+                        saida.put("corpo", binario ? Base64.encodeToString(r.corpo, Base64.NO_WRAP) : new String(r.corpo, java.nio.charset.StandardCharsets.UTF_8));
+                        call.resolve(saida);
+                    } catch (Rede.Falha f) {
+                        rejeitar(call, f);
+                    }
+                }
+            }
+        ).start();
+    }
+
+    /** GET para um arquivo na pasta de cache do app (o app lê depois pelo endereço do Capacitor e chama apagarCache). */
+    @PluginMethod
+    public void baixarParaCache(final PluginCall call) {
+        final String endereco = call.getString("url");
+        final String id = call.getString("id", "");
+        final Map<String, String> cabecalhos = cabecalhosDe(call);
+        if (endereco == null || !endereco.startsWith("https://")) {
+            call.reject("Endereço inválido: só HTTPS.", "ENDERECO");
+            return;
+        }
+        new Thread(
+            new Runnable() {
+                @Override
+                public void run() {
+                    File pasta = new File(getContext().getCacheDir(), "dl");
+                    if (!pasta.isDirectory() && !pasta.mkdirs()) {
+                        call.reject("Sem espaço para guardar o download.", "ESPACO");
+                        return;
+                    }
+                    File[] antigos = pasta.listFiles();
+                    if (antigos != null) {
+                        for (File antigo : antigos) {
+                            if (System.currentTimeMillis() - antigo.lastModified() > 3600_000L) antigo.delete();
+                        }
+                    }
+                    File arquivo = new File(pasta, "d" + System.nanoTime() + ".bin");
+                    try {
+                        long bytes = Rede.baixar(endereco, cabecalhos, arquivo, 120000, new Rede.Progresso() {
+                            @Override
+                            public void aoReceber(long recebido, long total) {
+                                JSObject evento = new JSObject();
+                                evento.put("id", id);
+                                evento.put("recebido", recebido);
+                                evento.put("total", total);
+                                notifyListeners("progresso", evento);
+                            }
+                        });
+                        JSObject saida = new JSObject();
+                        saida.put("caminho", arquivo.getAbsolutePath());
+                        saida.put("bytes", bytes);
+                        call.resolve(saida);
+                    } catch (Rede.Falha f) {
+                        rejeitar(call, f);
+                    }
+                }
+            }
+        ).start();
+    }
+
+    @PluginMethod
+    public void apagarCache(PluginCall call) {
+        String caminho = call.getString("caminho", "");
+        try {
+            File pasta = new File(getContext().getCacheDir(), "dl").getCanonicalFile();
+            File alvo = new File(caminho).getCanonicalFile();
+            if (alvo.getParentFile() != null && alvo.getParentFile().equals(pasta)) alvo.delete();   // só apaga dentro de cache/dl
+        } catch (java.io.IOException ignorado) {
+            // arquivo temporário: o próximo download limpa o que sobrou
+        }
+        call.resolve();
+    }
+
+    // ------------------------------------------------------------------ configuração guardada fora do WebView
+    // O localStorage do WebView pode ser limpo pelo sistema (pouco espaço, "limpar dados"); isto fica em SharedPreferences privado do app
+    // (allowBackup=false: não vai para a nuvem).
+
+    private SharedPreferences prefs() {
+        return getContext().getSharedPreferences("baixador-conexao", Context.MODE_PRIVATE);
+    }
+
+    @PluginMethod
+    public void guardarConfig(PluginCall call) {
+        String valor = call.getString("valor");
+        if (valor == null) {
+            call.reject("Sem valor.", "ARGUMENTO");
+            return;
+        }
+        boolean ok = prefs().edit().putString("conexao", valor).commit();
+        if (!ok) {
+            call.reject("Não consegui gravar a conexão.", "GRAVAR");
+            return;
+        }
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void lerConfig(PluginCall call) {
+        JSObject saida = new JSObject();
+        saida.put("valor", prefs().getString("conexao", ""));
+        call.resolve(saida);
+    }
+
+    @PluginMethod
+    public void apagarConfig(PluginCall call) {
+        prefs().edit().remove("conexao").commit();
+        call.resolve();
     }
 }

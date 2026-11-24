@@ -28,11 +28,26 @@
 
   /* ---------- pedidos ao notebook ---------- */
   function resposta(status, corpo) { return new Response(typeof corpo === 'string' ? corpo : JSON.stringify(corpo), { status: status, headers: { 'Content-Type': 'application/json' } }); }
-  async function doNotebook(caminho, limite) {
-    var c = cfg(); if (!c) throw new Error('sem-conexao');
+  /* HTTP nativo (sem as regras de CORS/rede local do WebView); sem o plugin novo, usa o fetch do WebView. Até 2 tentativas, só para falha de rede. */
+  var semNativo = false;
+  async function umaVez(c, caminho, limite) {
+    var S = !semNativo && window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.SalvarZip;
+    if (S) {
+      try {
+        var r = await S.requisitar({ url: c.base + caminho, headers: { Authorization: 'Bearer ' + c.chave }, limite: limite || 20000, binario: true });
+        var bin = atob(r.corpo || ''), v = new Uint8Array(bin.length); for (var i = 0; i < bin.length; i++) v[i] = bin.charCodeAt(i);
+        var corpo = r.status === 204 || r.status === 304 ? null : v;
+        return new Response(corpo, { status: r.status, headers: { 'Content-Type': r.tipo || 'application/octet-stream' } });
+      } catch (e) { if (!(e && e.code === 'UNIMPLEMENTED')) throw e; semNativo = true; }
+    }
     var ctl = new AbortController(), fim = setTimeout(function () { ctl.abort(); }, limite || 20000);
     try { return await nativoFetch(c.base + caminho, { headers: { Authorization: 'Bearer ' + c.chave }, signal: ctl.signal, cache: 'no-store' }); }
     finally { clearTimeout(fim); }
+  }
+  async function doNotebook(caminho, limite) {
+    var c = cfg(); if (!c) throw new Error('sem-conexao');
+    try { return await umaVez(c, caminho, limite); }
+    catch (e) { await new Promise(function (ok) { setTimeout(ok, 1000); }); return umaVez(c, caminho, limite); }
   }
   var motivoFalha = '';
   function falhou(motivo) { motivoFalha = motivo; }
