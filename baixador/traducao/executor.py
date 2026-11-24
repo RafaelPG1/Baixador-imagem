@@ -223,13 +223,16 @@ class TarefaTraducao:
 
     def iniciar_ou_enfileirar_web(self, pastas: List[Path]) -> int:
         """Motor web: capítulos com todas as traduções importadas. Sem tarefa rodando, começa uma; com uma preparação web em andamento,
-        entram no fim da fila dela (sem repetir quem já está lá). Com outro motor rodando, levanta RuntimeError: o motor errado não pode pegá-los."""
+        furam a fila: são os próximos depois do capítulo que está sendo preparado agora, que nunca é interrompido (sem repetir quem já está lá). Com outro motor rodando, levanta RuntimeError: o motor errado não pode pegá-los."""
         with self._lock:
             if self.estado == "executando" and self._cfg.get("motor") == "web" and not self._fechada and not self._parar.is_set():
                 ativos = {it["rel"] for it in self.itens if it["estado"] in ("fila", "traduzindo")}
+                for it in self.itens:
+                    if it["estado"] == "fila" and it["rel"] in {f"{Path(p).parent.name}/{Path(p).name}" for p in pastas}:
+                        it["prio"] = True                          # já esperava na fila: passa à frente também
                 novos = [Path(p) for p in pastas if f"{Path(p).parent.name}/{Path(p).name}" not in ativos]
                 for p in novos:
-                    self.itens.append({"nome": self._nome_item(p), "rel": f"{p.parent.name}/{p.name}", "estado": "fila", "etapa": "", "feitas": 0, "total": ESCALA})
+                    self.itens.append({"nome": self._nome_item(p), "rel": f"{p.parent.name}/{p.name}", "estado": "fila", "etapa": "", "feitas": 0, "total": ESCALA, "prio": True})   # prio: furam a fila de preparação
                     self._pastas.append(p)
                     self.capitulos += 1
                 return len(pastas)
@@ -372,10 +375,11 @@ class TarefaTraducao:
             indice = -1
             while True:
                 with self._lock:
-                    indice += 1
-                    if indice >= len(pastas):                      # a lista pode crescer (nova tentativa): fecha sob a trava
+                    fila = [k for k, it in enumerate(self.itens) if it["estado"] == "fila"]
+                    if not fila:                                   # a lista pode crescer (nova tentativa): fecha sob a trava
                         self._fechada = True
                         break
+                    indice = min(fila, key=lambda k: (not self.itens[k].get("prio"), k))   # tradução importada (prio) antes da preparação dos demais
                 pasta = pastas[indice]
                 if self._parar.is_set():
                     raise ErroTraducao("Tradução cancelada.")

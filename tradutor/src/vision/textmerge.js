@@ -4,7 +4,7 @@
 //  - caixa sem nada embaixo → texto novo: dentro de um balão detectado vira fala desse balão (a unidade do balão passa a ter
 //    todas as linhas); muito alta vira efeito sonoro; o resto é texto solto.
 // Não decide o que é fala: o OCR e a limpeza das etapas seguintes recusam o que não é texto legível.
-const MIN_SCORE = 0.6;
+const MIN_SCORE = 0.5; // igual ao BOX_THRESH do detector
 const MIN_SIDE = 10;
 const SFX_HEIGHT = 60; // linha de fala tem 20–40 px; letra de efeito sonoro, bem mais
 const SOLID = ['free_text', 'balloon_text', 'narration', 'sfx'];

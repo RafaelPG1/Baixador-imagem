@@ -4,6 +4,7 @@
 //  - fundo de arte: só mexe se o texto for de sobreposição (branco ou preto com contorno) e preenche por difusão
 //    das cores vizinhas; texto colorido dentro da cena (placas, logos) fica como está, só com tooltip.
 import { dilate, bestBox } from './clean.js';
+import { apagar } from './apagar.js';
 
 const median = (a) => { const s = Float64Array.from(a).sort(); return s.length ? s[s.length >> 1] : 0; };
 const hex = ([r, g, b]) => `#${[r, g, b].map((v) => Math.round(v).toString(16).padStart(2, '0')).join('')}`;
@@ -37,6 +38,15 @@ export function inpaint(rgb, w, h, mask) {
     }
   }
   return out;
+}
+
+
+// Texto sobre arte: a máscara das letras cresce por traços vizinhos (acento, ponta, contorno fraco) para não sobrar fantasma.
+// shortcut: 3 passadas, no máximo 6 px além da máscara; arte muito rendilhada perto do texto pode perder um pouco de detalhe.
+function apagarLivre(reg, rw, rh, mask, zone) {
+  const permitido = dilate(mask, rw, rh, 6); // cresce no máximo 6 px além das letras achadas
+  const r = apagar({ reg, rw, rh, seed: mask, zone, permitido, protegido: new Uint8Array(rw * rh), passes: 3 });
+  return r;
 }
 
 // Devolve { bg, ink, stroke, box, lines, fontMax, flat } ou { empty: true, reason }.
@@ -112,8 +122,8 @@ export function cleanFree({ rgb, W, H, bbox, patch }) {
   } else {
     const reg = new Uint8Array(rw * rh * 3);
     for (let y = 0; y < rh; y++) reg.set(rgb.subarray(px(0, y), px(0, y) + rw * 3), y * rw * 3);
-    const filled = inpaint(reg, rw, rh, mask);
-    for (let i = 0; i < mask.length; i++) if (mask[i]) { const o = ((ry + Math.floor(i / rw)) * W + rx + (i % rw)) * 4; for (let c = 0; c < 3; c++) patch[o + c] = Math.round(filled[i * 3 + c]); patch[o + 3] = 255; }
+    const ap = apagarLivre(reg, rw, rh, mask, textZone);
+    for (let i = 0; i < ap.mask.length; i++) if (ap.mask[i]) { const o = ((ry + Math.floor(i / rw)) * W + rx + (i % rw)) * 4; for (let c = 0; c < 3; c++) patch[o + c] = Math.round(ap.fill[i * 3 + c]); patch[o + 3] = 255; }
     const light = bgL < 128; // sobre arte escura: letra branca com contorno escuro; sobre clara, o contrário
     inkColor = light ? [255, 255, 255] : [0, 0, 0];
     stroke = light ? '#000000' : '#ffffff';
@@ -204,8 +214,8 @@ export function cleanForce({ rgb, W, H, bbox, patch, lineHint = 1 }) {
   } else {
     const reg = new Uint8Array(rw * rh * 3);
     for (let y = 0; y < rh; y++) reg.set(rgb.subarray(px(0, y), px(0, y) + rw * 3), y * rw * 3);
-    const filled = inpaint(reg, rw, rh, mask);
-    for (let i = 0; i < mask.length; i++) if (mask[i]) setPx(i, [0, 1, 2].map((c) => Math.round(filled[i * 3 + c])));
+    const ap = letters ? apagarLivre(reg, rw, rh, mask, zone) : { mask, fill: inpaint(reg, rw, rh, mask) };
+    for (let i = 0; i < ap.mask.length; i++) if (ap.mask[i]) setPx(i, [0, 1, 2].map((c) => Math.round(ap.fill[i * 3 + c])));
   }
   // cor da letra e contorno: contraste com o fundo sob o texto; sobre fundo misto, contorno da cor oposta
   const light = bgL < 128;

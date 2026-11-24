@@ -182,6 +182,19 @@ def _caixa(v: Any, largura: float, altura: float) -> Optional[List[float]]:
     return [round(x, 1), round(y, 1), round(w, 1), round(h, 1)]
 
 
+def _perfil(v: Any, largura: float, altura: float) -> List[List[float]]:
+    """Faixas [y, x0, x1] do miolo do balão (encaixe do texto em balão redondo); lixo vira lista vazia."""
+    if not isinstance(v, list):
+        return []
+    saida: List[List[float]] = []
+    for f in v[:120]:
+        if isinstance(f, list) and len(f) == 3 and all(isinstance(n, (int, float)) and not isinstance(n, bool) for n in f):
+            y, a, b = (float(n) for n in f)
+            if 0 <= y <= altura and 0 <= a < b <= largura:
+                saida.append([round(y, 1), round(a, 1), round(b, 1)])
+    return saida
+
+
 def _falas_usuario(pagina: Dict[str, Any], largura: float, altura: float) -> List[Dict[str, Any]]:
     """Leitura do USUÁRIO: só o necessário para desenhar a tradução (caixa, cor, fonte, texto). Nada de original, status ou alerta."""
     saida: List[Dict[str, Any]] = []
@@ -195,6 +208,7 @@ def _falas_usuario(pagina: Dict[str, Any], largura: float, altura: float) -> Lis
         saida.append({
             "modo": r["mode"], "caixa": caixa, "tinta": _cor(r.get("ink"), "#111111"), "contorno": _cor(r.get("stroke"), None), "fundo": _cor(r.get("bg"), None),
             "fonteMax": round(_num(r.get("fontMax"), 4, 600, 40.0), 1), "maiuscula": bool(r.get("upper")), "texto": texto[:1200],
+            "perfil": _perfil(r.get("perfil"), largura, altura),
         })
     return saida
 

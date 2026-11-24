@@ -5,10 +5,12 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { progresso } from '../progresso.js';
 import sharp from 'sharp';
-import { cleanFree, cleanForce } from './clean-free.js';
+import { cleanFree, cleanForce, inpaint } from './clean-free.js';
+import { apagar, tracos } from './apagar.js';
 import { isWord } from '../ocr/lexicon.js';
 
 const median = (a) => { const s = Float64Array.from(a).sort(); return s.length ? s[s.length >> 1] : 0; };
+const lumaOf = (c) => (299 * c[0] + 587 * c[1] + 114 * c[2]) / 1000;
 const hex = ([r, g, b]) => `#${[r, g, b].map((v) => Math.round(v).toString(16).padStart(2, '0')).join('')}`;
 
 // Preenche o polígono (regra par-ímpar, linha a linha) numa máscara w×h.
@@ -72,7 +74,8 @@ export function bestBox(fits, w0, h0, maxKw, maxKh) {
 // empilhadas em rgb); sem ele vale `polygon`.
 export function cleanUnit({ rgb, W, H, polygon, polygons = [polygon], bbox, patch }) {
   const touchesEdge = bbox[1] <= 2 || bbox[1] + bbox[3] >= H - 2;
-  const pts = touchesEdge ? [...polygons.flat(), [bbox[0], bbox[1]], [bbox[0] + bbox[2], bbox[1] + bbox[3]]] : polygons.flat(); // a região cobre o texto da borda mesmo fora do polígono
+  const m0 = Math.max(6, Math.round(0.18 * Math.min(bbox[2], bbox[3])));
+  const pts = [...polygons.flat(), [bbox[0] - m0 - 5, bbox[1] - m0 - 5], [bbox[0] + bbox[2] + m0 + 5, bbox[1] + bbox[3] + m0 + 5]]; // a região cobre o texto mesmo fora do polígono (texto que passa do balão, texto na borda)
   const rx = Math.max(0, Math.floor(Math.min(...pts.map((p) => p[0]))));
   const ry = Math.max(0, Math.floor(Math.min(...pts.map((p) => p[1]))));
   const rw = Math.min(W, Math.ceil(Math.max(...pts.map((p) => p[0])))) - rx;
@@ -147,19 +150,61 @@ export function cleanUnit({ rgb, W, H, polygon, polygons = [polygon], bbox, patc
   const core = inkPx.slice(0, Math.max(1, Math.floor(inkPx.length * 0.4)));
   const inkRgb = [0, 1, 2].map((c) => median(core.map((i) => rgbAt(i)[c])));
 
-  // cobertura: tinta engordada e fechada (junta as letras para não sobrar "fantasma"), só dentro do balão
-  const grown = dilate(ink, rw, rh, 2);
-  const cover = erode(dilate(grown, rw, rh, 4), rw, rh, 4);
-  const halo = dilate(ink, rw, rh, 7); // restos fracos da compressão em volta das letras (só no fundo liso do balão)
-  for (let i = 0; i < cover.length; i++) if (!cover[i] && halo[i] && Math.abs(luma[i] - med) > 8) cover[i] = 1;
+  // Cobertura: parte da tinta achada e deixa `apagar` reconstruir o fundo e cobrir o que ainda destoa (letra fraca, ponta que o OCR
+  // não pegou, texto que passou do balão). O contorno do balão fica protegido; o fundo vem da difusão das cores vizinhas, então
+  // balão com degradê ou textura não ganha "mancha" de cor chapada.
+  // Contorno protegido = faixa junto da borda do polígono QUE TEM A COR DO CONTORNO (o resto da faixa — fundo do balão, ponta de letra —
+  // é pintável). A cor do contorno é a dos pixels da faixa que mais se afastam do fundo do balão.
+  const faixa = new Uint8Array(rw * rh);
+  for (let i = 0; i < faixa.length; i++) if (filled[i] && !interior[i]) faixa[i] = 1;
+  if (edgeRect) for (let y = edgeRect[1]; y < edgeRect[3]; y++) for (let x = edgeRect[0]; x < edgeRect[2]; x++) faixa[y * rw + x] = 0;
+  const idxFaixa = []; for (let i = 0; i < faixa.length; i++) if (faixa[i]) idxFaixa.push(i);
+  idxFaixa.sort((a, b) => Math.abs(luma[b] - med) - Math.abs(luma[a] - med));
+  const corCont = idxFaixa.length >= 12 ? [0, 1, 2].map((c) => median(idxFaixa.slice(0, Math.max(6, Math.floor(idxFaixa.length * 0.35))).map((i) => rgb[((ry + Math.floor(i / rw)) * W + rx + (i % rw)) * 3 + c]))) : null;
+  const rgbR = (i) => { const o = ((ry + Math.floor(i / rw)) * W + rx + (i % rw)) * 3; return [rgb[o], rgb[o + 1], rgb[o + 2]]; };
+  const protegido = new Uint8Array(rw * rh);
+  if (!corCont) { for (const i of idxFaixa) protegido[i] = 1; }
+  else if (Math.abs(lumaOf(corCont) - med) > 40) { for (const i of idxFaixa) if (Math.max(...rgbR(i).map((v, c) => Math.abs(v - corCont[c]))) < 45) protegido[i] = 1; }
+  // texto que passou do polígono: tinta fora do balão, junto da caixa lida, também é do texto
+  const seed = Uint8Array.from(ink);
+  const fora = tracos(luma, rw, rh);
+  for (let y = ty0; y < ty1; y++) for (let x = tx0; x < tx1; x++) {
+    const i = y * rw + x;
+    if (!filled[i] && fora[i]) seed[i] = 1;
+    else if (faixa[i] && !protegido[i] && (darkInk ? luma[i] < med - 70 : luma[i] > med + 70)) seed[i] = 1; // ponta de letra na faixa do contorno que não tem a cor dele
+  }
+  const zone = new Uint8Array(rw * rh), margem = Math.max(6, Math.round(0.18 * Math.min(bbox[2], bbox[3])));
+  for (let y = Math.max(0, ty0 - margem); y < Math.min(rh, ty1 + margem); y++) for (let x = Math.max(0, tx0 - margem); x < Math.min(rw, tx1 + margem); x++) zone[y * rw + x] = 1;
+  // Junto do contorno (5 px de cada lado) só vale cobrir o que tem cor de TINTA e não de contorno: o contorno inteiro (com antialias)
+  // é traço também, e crescer por ele o roeria até virar fio.
+  const miolo5 = erode(filled, rw, rh, 5);
+  const anel = dilate(filled, rw, rh, 5).map((v, i) => (v && !miolo5[i] ? 1 : 0));
+  const permitido = new Uint8Array(rw * rh).fill(1);
+  {
+    const sp = [...seed.keys()].filter((i) => seed[i] && interior[i]);
+    const corT = sp.length ? [0, 1, 2].map((c) => median(sp.map((i) => rgbR(i)[c]))) : null;
+    const dc = (i, cor) => Math.max(...rgbR(i).map((v, k) => Math.abs(v - cor[k])));
+    for (let i = 0; i < anel.length; i++) {
+      if (!anel[i]) continue;
+      if (edgeRect && (i % rw) >= edgeRect[0] && (i % rw) < edgeRect[2] && Math.floor(i / rw) >= edgeRect[1] && Math.floor(i / rw) < edgeRect[3]) continue;
+      permitido[i] = corT && dc(i, corT) < 110 && (!corCont || dc(i, corCont) >= 45) ? 1 : 0;
+    }
+  }
+  const reg = new Uint8Array(rw * rh * 3);
+  for (let y = 0; y < rh; y++) reg.set(rgb.subarray(((ry + y) * W + rx) * 3, ((ry + y) * W + rx + rw) * 3), y * rw * 3);
+  const ap = apagar({ reg, rw, rh, seed, zone, permitido, protegido, fonteRuim: anel, lado: filled });
+  // Letra que atravessa o contorno: o vão que ela abriu no contorno (fecho morfológico) é refeito só com as cores do contorno.
+  const fecho = erode(dilate(protegido, rw, rh, 4), rw, rh, 4), vao = new Uint8Array(rw * rh);
+  let nVao = 0;
+  for (let i = 0; i < vao.length; i++) if (fecho[i] && !protegido[i] && ap.mask[i]) { vao[i] = 1; nVao++; }
+  const contorno = nVao ? inpaint(reg, rw, rh, Uint8Array.from(protegido, (v) => (v ? 0 : 1))) : null;
   let covered = 0;
   for (let y = 0; y < rh; y++) for (let x = 0; x < rw; x++) {
     const i = y * rw + x;
-    if (cover[i] && interior[i]) {
-      const o = ((ry + y) * W + rx + x) * 4;
-      patch[o] = bg[0]; patch[o + 1] = bg[1]; patch[o + 2] = bg[2]; patch[o + 3] = 255;
-      covered++;
-    }
+    if (!ap.mask[i]) continue;
+    const o = ((ry + y) * W + rx + x) * 4, f = vao[i] ? contorno : ap.fill;
+    patch[o] = Math.round(f[i * 3]); patch[o + 1] = Math.round(f[i * 3 + 1]); patch[o + 2] = Math.round(f[i * 3 + 2]); patch[o + 3] = 255;
+    covered++;
   }
 
   // linhas de texto: faixas de linhas de pixels com tinta, juntando vãos pequenos (pingo do "i", acentos)
@@ -182,7 +227,21 @@ export function cleanUnit({ rgb, W, H, polygon, polygons = [polygon], bbox, patc
   };
   const best = bestBox(fits, w0, h0, 1.6, 2.2);
   const bw = best.w * 0.96, bh = best.h * 0.96;
-  return { bg: hex(bg), ink: hex(inkRgb), lines, fontMax, covered, box: [Math.round(rx + cx - bw / 2), Math.round(ry + cy - bh / 2), Math.round(bw), Math.round(bh)] };
+  // perfil do balão: para cada faixa de linhas, de onde a onde vai o miolo (sem contorno) em volta do centro. O encaixe do texto usa isto
+  // para respeitar balão redondo, que não é retângulo.
+  const perfil = [], passo = Math.max(2, Math.ceil(rh / 70)), cxi = Math.round(cx);
+  const corre = (y) => {
+    let x = cxi;
+    for (let d = 0; d < 10 && !interior[y * rw + x]; d++) x = cxi + (d % 2 ? -((d + 1) >> 1) : (d >> 1) + 1);
+    if (x < 0 || x >= rw || !interior[y * rw + x]) return null;
+    let l = x, r = x;
+    while (l > 0 && interior[y * rw + l - 1]) l--;
+    while (r < rw - 1 && interior[y * rw + r + 1]) r++;
+    return r - l >= 8 ? [l + 2, r - 2] : null;
+  };
+  for (const dir of [-1, 1]) for (let y = Math.round(cy); y >= 0 && y < rh; y += dir * passo) { const r = corre(y); if (!r) break; perfil.push([ry + y, rx + r[0], rx + r[1]]); }
+  perfil.sort((a, b) => a[0] - b[0]);
+  return { bg: hex(bg), ink: hex(inkRgb), lines, fontMax, covered, perfil, box: [Math.round(rx + cx - bw / 2), Math.round(ry + cy - bh / 2), Math.round(bw), Math.round(bh)] };
 }
 
 const upperRatio = (s) => { const l = s.replace(/[^\p{L}]/gu, ''); return l ? [...l].filter((c) => c === c.toUpperCase() && c !== c.toLowerCase()).length / l.length : 0; };
@@ -294,7 +353,7 @@ export async function cleanChapter({ results3, ocrFile, translationFile, outDir,
       if (c.empty) { await force('sem-tinta'); continue; }
       stats.cleaned++;
       if (join) stats.joined++;
-      out.units.push({ id: t.id, mode: o.kind === 'narration' ? 'narracao' : 'balao', flag, join, box: c.box, bg: c.bg, ink: c.ink, fontMax: c.fontMax, lines: c.lines, upper: upperRatio(t.source) >= 0.8 });
+      out.units.push({ id: t.id, mode: o.kind === 'narration' ? 'narracao' : 'balao', flag, join, box: c.box, perfil: c.perfil, bg: c.bg, ink: c.ink, fontMax: c.fontMax, lines: c.lines, upper: upperRatio(t.source) >= 0.8 });
     }
     // a página só recebe pixels de si mesma e da anterior; ao terminar esta, o patch dela está completo
     const patch = patches.get(page.file);

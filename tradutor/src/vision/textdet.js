@@ -7,9 +7,31 @@ import sharp from 'sharp';
 
 const require = createRequire(import.meta.url);
 const BIN_THRESH = 0.3; // probabilidade mínima para um pixel contar como texto
-const BOX_THRESH = 0.55; // média de probabilidade mínima de uma região
+const BOX_THRESH = 0.5; // média de probabilidade mínima de uma região (letra estilizada/fina rende média baixa; o OCR recusa o que não é texto)
 const UNCLIP = 0.9; // o modelo devolve o miolo do texto; a caixa cresce só um pouco (o padrão do DB, 1,6, traz arte para o recorte do OCR)
 const MAX_SIDE = 1600;
+const OVERLAP = 160;
+
+// Página mais alta/larga que MAX_SIDE encolheria o texto até sumir (tira de webtoon). Fatias com sobreposição, na escala 1.
+export function fatias(len, side = MAX_SIDE, overlap = OVERLAP) {
+  if (len <= side) return [[0, len]];
+  const out = [];
+  for (let a = 0; ; a += side - overlap) { const b = Math.min(len, a + side); out.push([a, b]); if (b >= len) break; }
+  return out;
+}
+// Mesma região vista em duas fatias: fica a maior caixa (a outra é a mesma linha cortada na emenda).
+export function dedupe(dets) {
+  const out = [];
+  for (const d of [...dets].sort((a, b) => b.bbox[2] * b.bbox[3] - a.bbox[2] * a.bbox[3])) {
+    const [x, y, w, h] = d.bbox;
+    const dup = out.some((o) => {
+      const iw = Math.min(x + w, o.bbox[0] + o.bbox[2]) - Math.max(x, o.bbox[0]), ih = Math.min(y + h, o.bbox[1] + o.bbox[3]) - Math.max(y, o.bbox[1]);
+      return iw > 0 && ih > 0 && (iw * ih) / (w * h) >= 0.7;
+    });
+    if (!dup) out.push(d);
+  }
+  return out;
+}
 
 // Componentes conexas (4-vizinhos) de prob > BIN_THRESH → [{ x0, y0, x1, y1, n, sum }] em coordenadas do mapa.
 export function components(prob, w, h, thresh = BIN_THRESH) {
@@ -64,6 +86,19 @@ export async function createTextDetector() {
     name: 'PP-OCRv4-det',
     // rgb: W×H×3. Devolve [{ bbox, score }] em pixels da página.
     async detect(rgb, W, H) {
+      if (Math.max(W, H) <= MAX_SIDE) return one(rgb, W, H);
+      const all = [];
+      for (const [y0, y1] of fatias(H)) for (const [x0, x1] of fatias(W)) {
+        const w = x1 - x0, h = y1 - y0, tile = Buffer.alloc(w * h * 3);
+        for (let y = 0; y < h; y++) rgb.copy ? rgb.copy(tile, y * w * 3, ((y0 + y) * W + x0) * 3, ((y0 + y) * W + x1) * 3) : tile.set(rgb.subarray(((y0 + y) * W + x0) * 3, ((y0 + y) * W + x1) * 3), y * w * 3);
+        for (const d of await one(tile, w, h)) all.push({ ...d, bbox: [d.bbox[0] + x0, d.bbox[1] + y0, d.bbox[2], d.bbox[3]] });
+      }
+      return dedupe(all);
+    },
+    async close() { await session.release?.(); },
+  };
+  async function one(rgb, W, H) {
+    {
       const k = Math.min(1, MAX_SIDE / Math.max(W, H));
       const rw = Math.max(32, Math.ceil((W * k) / 32) * 32), rh = Math.max(32, Math.ceil((H * k) / 32) * 32);
       const { data } = await sharp(rgb, { raw: { width: W, height: H, channels: 3 } }).resize({ width: rw, height: rh, fit: 'fill', kernel: 'lanczos3' }).raw().toBuffer({ resolveWithObject: true });
@@ -73,7 +108,6 @@ export async function createTextDetector() {
       const out = await session.run({ [session.inputNames[0]]: new ort.Tensor('float32', input, [1, 3, rh, rw]) });
       const prob = out[session.outputNames[0]].data;
       return boxesFromMap(prob, rw, rh, W / rw, H / rh, W, H);
-    },
-    async close() { await session.release?.(); },
-  };
+    }
+  }
 }

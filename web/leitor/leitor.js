@@ -32,11 +32,9 @@
     Object.keys(attrs || {}).forEach(function (k) { n.setAttribute(k, attrs[k]); });
     return n;
   }
-  function escrever(g, fala, medidas) {
+  function textoDaFala(fala) { return fala.maiuscula ? fala.texto.toLocaleUpperCase('pt-BR') : fala.texto; }
+  function escrever(g, fala, f) {
     g.textContent = '';
-    var texto = fala.maiuscula ? fala.texto.toLocaleUpperCase('pt-BR') : fala.texto;
-    // o texto pode vazar do balão: se não coubesse sem encolher demais, a caixa cresce antes de a letra diminuir
-    var f = window.LeitorLayout.fitFlexible(medir, texto, fala.caixa, { fontMax: fala.fonteMax, limites: medidas });
     var c = f.caixa;
     var t = elSvg('text', { 'class': 'tr', fill: fala.tinta, 'font-size': f.size, 'text-anchor': 'middle', 'dominant-baseline': 'central' });
     var halo = fala.contorno || fala.fundo;                           // contorno (letra sobre a arte) ou halo na cor do balão, que mantém legível o que passa do balão
@@ -48,7 +46,17 @@
     f.lines.forEach(function (linha, i) { var s = elSvg('tspan', { x: c[0] + c[2] / 2, y: topo + i * lh }); s.textContent = linha; t.appendChild(s); });
     g.appendChild(t);
   }
-  function ajustarTudo() { larguras = {}; textos.forEach(function (x) { escrever(x.g, x.fala, x.medidas); }); }
+  // O encaixe é da IMAGEM inteira: cada fala se ajusta ao formato do próprio balão e, depois, as falas se afastam para nunca se sobrepor.
+  function ajustarTudo() {
+    larguras = {};
+    var porImagem = [];
+    textos.forEach(function (x) { var k = porImagem.indexOf(x.medidas); if (k < 0) { porImagem.push(x.medidas); k = porImagem.length - 1; } (porImagem[k].itens = porImagem[k].itens || []).push(x); });
+    porImagem.forEach(function (medidas) {
+      var itens = medidas.itens; delete medidas.itens;
+      var res = window.LeitorLayout.fitPagina(medir, itens.map(function (x) { return { texto: textoDaFala(x.fala), caixa: x.fala.caixa, fonteMax: x.fala.fonteMax, perfil: x.fala.perfil }; }), medidas);
+      itens.forEach(function (x, i) { escrever(x.g, x.fala, res[i]); });
+    });
+  }
   window.ajustarTudo = ajustarTudo;
 
   /* ---------- montagem da página a partir dos dados do capítulo ---------- */
