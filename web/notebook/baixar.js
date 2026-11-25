@@ -39,7 +39,13 @@ function opcaoAtualizar() {
   $('opcao-atualizar').hidden = outras && !ligado;
   $('nota-atualizar').hidden = !ligado;
   $('continuar-auto').disabled = $('traduzir-auto').disabled = ligado;
-  $('limite-auto').disabled = ligado || !$('continuar-auto').checked;
+  estadoLimite(ligado);
+}
+// "Parar depois de N": só com "Continuar…" ligado; o número só com a caixa marcada. Sem a caixa, não há limite.
+function estadoLimite(bloqueado = $('atualizar-auto').checked) {
+  const ativo = $('continuar-auto').checked && !bloqueado;
+  $('limitar-auto').disabled = !ativo;
+  $('limite-auto').disabled = !ativo || !$('limitar-auto').checked;
 }
 function aplicarModo() {
   const manual = modo === 'manual';
@@ -176,8 +182,10 @@ function aplicarManual(e) {
   anexarLog($('log-manual'), e.log);
   logM = e.log_total;
   estadoManual = e.estado; salvandoManual = e.salvando; automaticoAtivo = !!e.automatico;
-  if (automaticoAtivo && typeof e.continuar === 'boolean' && $('continuar-auto').checked !== e.continuar) { $('continuar-auto').checked = e.continuar; $('limite-auto').disabled = !e.continuar; }
-  if (automaticoAtivo && e.limite && document.activeElement !== $('limite-auto')) $('limite-auto').value = e.limite;
+  if (automaticoAtivo && typeof e.continuar === 'boolean' && $('continuar-auto').checked !== e.continuar) { $('continuar-auto').checked = e.continuar; estadoLimite(); }
+  if (automaticoAtivo && typeof e.limite === 'number' && document.activeElement !== $('limite-auto') && document.activeElement !== $('limitar-auto')) {
+    $('limitar-auto').checked = e.limite > 0; if (e.limite) $('limite-auto').value = e.limite; estadoLimite();
+  }
   if (e.aviso && e.aviso !== ultimoAviso) { ultimoAviso = e.aviso; mensagem(e.aviso); } else if (!e.aviso) ultimoAviso = '';
   if (navegadorAtivo() && e.pagina && e.pagina.url && (e.pagina.titulo !== paginaAtual.titulo || e.pagina.url !== paginaAtual.url)) {
     paginaAtual = e.pagina; urlLida = e.pagina.url; detectarCapitulo(e.pagina.titulo, e.pagina.url);
@@ -197,17 +205,20 @@ $('limpar-lista').addEventListener('click', async () => { try { await chamar('/a
 function notaTraduzir() { $('nota-traduzir').hidden = !($('traduzir-auto').checked && !$('continuar-auto').checked); }
 $('traduzir-auto').addEventListener('change', () => { notaTraduzir(); opcaoAtualizar(); });
 $('atualizar-auto').addEventListener('change', opcaoAtualizar);
-const limiteAuto = () => { const n = Number($('limite-auto').value); return Number.isInteger(n) && n >= 1 && n <= 300 ? n : 0; };   // 0 = inválido
+const limiteValido = () => { const n = Number($('limite-auto').value); return Number.isInteger(n) && n >= 1 && n <= 300 ? n : 0; };   // 0 = inválido
+const limiteInvalido = () => $('limitar-auto').checked && !limiteValido();
+const limiteAuto = () => ($('limitar-auto').checked ? limiteValido() : 0);                  // 0 = sem limite
 async function enviarContinuar() {
   if (!automaticoAtivo) return;                       // com o automático rodando, vale na hora (no fim do capítulo atual)
-  if ($('continuar-auto').checked && !limiteAuto()) { mensagem('Informe de 1 a 300 capítulos.'); return; }
+  if ($('continuar-auto').checked && limiteInvalido()) { mensagem('Informe de 1 a 300 capítulos.'); return; }
   try { await chamar('/api/manual/continuar', {ativo: $('continuar-auto').checked, limite: limiteAuto()}); } catch (e) { mensagem(e.message); }
 }
 $('continuar-auto').addEventListener('change', () => {
   $('nota-continuar').hidden = !$('continuar-auto').checked;
-  $('limite-auto').disabled = !$('continuar-auto').checked || $('continuar-auto').disabled;
+  estadoLimite();
   notaTraduzir(); opcaoAtualizar(); enviarContinuar();
 });
+$('limitar-auto').addEventListener('change', () => { estadoLimite(); enviarContinuar(); });
 $('limite-auto').addEventListener('change', enviarContinuar);
 $('procurar').addEventListener('click', async () => {
   mensagem(''); $('procurar').disabled = true;
@@ -369,8 +380,8 @@ $('formulario').addEventListener('submit', async (ev) => {
         if (alvo) { Object.assign(comum, {url: alvo, numero: '', titulo: ''}); aviso('Atualizando a obra a partir do último capítulo salvo; o que já existe é pulado.'); }
         else aviso('Esta obra ainda não está na biblioteca: começando pelo endereço informado.');
       }
-      if (!atualizando && $('continuar-auto').checked && !limiteAuto()) { mensagem('Informe de 1 a 300 capítulos para baixar.'); $('limite-auto').focus(); return; }
-      await chamar('/api/manual/automatico', {...comum, limite: atualizando ? 0 : (limiteAuto() || 0), pasta: $('pasta').value, espera: Number($('espera').value || 30), ignorar_comentarios: $('sem-comentarios').checked,
+      if (!atualizando && $('continuar-auto').checked && limiteInvalido()) { mensagem('Informe de 1 a 300 capítulos para baixar.'); $('limite-auto').focus(); return; }
+      await chamar('/api/manual/automatico', {...comum, limite: atualizando ? 0 : limiteAuto(), pasta: $('pasta').value, espera: Number($('espera').value || 30), ignorar_comentarios: $('sem-comentarios').checked,
         continuar: atualizando || $('continuar-auto').checked, modo_busca: $('modo-busca').value,
         traduzir: !atualizando && $('traduzir-auto').checked && $('continuar-auto').checked});
     }
@@ -423,7 +434,7 @@ const Baixar = {
       const comum = {url: urlUltimo, ...Baixar.configuracaoNavegador(), obra: nomeObra, numero: '', titulo: ''};
       if (!$('pasta').value.trim()) { aviso('Informe a pasta de destino (em “Navegador e destino”) para o modo automático.'); return false; }
       modo = 'auto'; document.querySelector('input[name=modo][value=auto]').checked = true; aplicarModo();   // "Atualizar" sempre usa o automático, qualquer que seja o modo escolhido
-      $('continuar-auto').checked = true; $('nota-continuar').hidden = false; $('limite-auto').disabled = true; opcaoAtualizar();
+      $('continuar-auto').checked = true; $('limitar-auto').checked = false; $('nota-continuar').hidden = false; opcaoAtualizar();
       await chamar('/api/manual/automatico', {...comum, pasta: $('pasta').value, espera: Number($('espera').value || 30), ignorar_comentarios: $('sem-comentarios').checked,
         continuar: true, atualizar: true, modo_busca: $('modo-busca').value, traduzir: $('traduzir-auto').checked});
       aviso(`Atualizando “${nomeObra}” no modo automático: o último capítulo salvo não é baixado de novo: o programa aperta em “próximo” e baixa só os novos.`);

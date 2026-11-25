@@ -58,7 +58,7 @@
         const e = estado.get(c.rel), l = h('label', 'webia-cap');
         const i = h('input'); i.type = 'checkbox'; i.checked = marcados.has(c.rel);
         i.addEventListener('change', () => { if (i.checked) marcados.add(c.rel); else marcados.delete(c.rel); resumo(); });
-        const t = !e?.textos && emFila.has(c.rel) ? 'preparando…' : e?.textos ? `${e.importados}/${e.textos} traduzidos` + (e.completo ? ' · completo' : '') : (e?.incompleta ? `${e.incompleta} fala(s) com erro · preparar de novo` : 'textos não preparados');
+        const t = !e?.textos && emFila.has(c.rel) ? 'preparando…' : e?.textos ? `${e.importados}/${e.textos} traduzidos` + (e.completo ? ' · completo' : e.importados ? ` · parcial, faltam ${e.textos - e.importados}` : ' · preparado') : (e?.incompleta ? `${e.incompleta} fala(s) com erro · preparar de novo` : 'textos não preparados');
         l.append(i, h('span', 'nome', c.numero != null && c.numero !== '' ? 'Cap. ' + c.numero : c.rotulo), h('span', 'est' + (e?.textos ? (e.completo ? ' ok' : ' ativo') : ''), t));
         return l;
       }));
@@ -67,7 +67,7 @@
     function resumo() {
       const prontos = [...marcados].filter((r) => estado.get(r)?.textos).length;
       resumoSel.textContent = `${marcados.size} selecionado(s) · ${prontos} com textos prontos`;
-      btnPreparar.disabled = ocupado || !novos().length; gerar.disabled = !prontos; resumoSel.title = '';
+      btnPreparar.disabled = !novos().length;       // com preparação em andamento, capítulos da mesma obra entram nela (o servidor bloqueia outra obra) gerar.disabled = !prontos; resumoSel.title = '';
     }
     async function atualizar() {
       try {
@@ -156,17 +156,22 @@
         const ok = c.completo && !c.desconhecidos.length && !c.duplicados.length && !c.quebrados.length && !c.vazios.length;
         linhasR.push([ok ? 'ok' : (c.completo ? 'aviso' : 'erro'), `${c.rotulo}: ${c.ja_importados + c.novas}/${c.esperados} traduzidos${gravou ? '' : ` (${c.novas} novos)`}` + (c.completo ? ' · todas as falas têm tradução' : ` · faltam ${c.qtd_faltam}`)]);
         const det = (rot, v) => { if (v.length) linhasR.push(['nota', `   ${rot}: ${v.join(', ')}`]); };
-        det('faltam', c.faltam); det('identificador desconhecido (ignorado)', c.desconhecidos); det('duplicados com textos diferentes (ignorados)', c.duplicados);
+        linhasR.push([c.faltam.length ? 'erro' : 'nota', '   ' + c.mensagem]);
+        if (c.ausentes.length) linhasR.push(['nota ausentes', '   Identificadores que faltam:\n' + c.ausentes.join(c.ausentes.length > 30 ? ' ' : '\n')]);
+        if (c.mantidas.length) linhasR.push(['nota', `   já traduzidos antes (mantida a tradução anterior, não sobrescrita): ${c.mantidas.join(', ')}`]);
+        det('identificador desconhecido (ignorado)', c.desconhecidos); det('duplicados com textos diferentes (ignorados)', c.duplicados);
         det('linha quebrada ou com texto extra (ignorada)', c.quebrados); det('sem texto traduzido (ignorada)', c.vazios);
         if (c.iguais_ao_original.length) linhasR.push(['aviso', `   iguais ao original (aceitas, confira se deviam mudar): ${c.iguais_ao_original.join(', ')}`]);
       });
+      const amb = Object.entries(rel.codigos_ambiguos || {});
+      if (amb.length) linhasR.push(['erro', 'Código repetido em mais de um capítulo (nada importado para eles): ' + amb.map(([k, v]) => `${k} → ${v.join(' / ')}`).join('; ')]);
       if (rel.codigos_desconhecidos.length) linhasR.push(['aviso', `Códigos de capítulo desconhecidos (ignorados): ${rel.codigos_desconhecidos.join(', ')}. Prepare os textos e exporte de novo.`]);
       if (rel.total_fora) linhasR.push(['nota', `Fora da estrutura (ignoradas): ${rel.linhas_fora_da_estrutura.join(' | ')}`]);
       const incompletos = caps.filter((c) => !c.completo);
       if (!gravou) linhasR.push(['nota', 'Verificação feita: nada foi gravado.']);
       else if (!novas && !caps.some((c) => c.ja_importados)) linhasR.push(['erro', 'Nada foi importado: nenhuma tradução válida foi encontrada no texto colado.']);
       else if (incompletos.length) linhasR.push(['aviso', `Traduções válidas guardadas (${novas} nova(s)). ${incompletos.length} capítulo(s) ainda incompleto(s): importe as falas que faltam e ele é aplicado sozinho. Nada foi aplicado neles.`]);
-      relatorio.replaceChildren(...linhasR.map(([cl, t]) => h('p', 'nota ' + cl, t)));
+      relatorio.replaceChildren(...linhasR.map(([cl, t]) => { const p = h('p', 'nota ' + cl, t); if (cl.includes('ausentes')) p.style.whiteSpace = 'pre-wrap'; return p; }));
     }
     const final = h('p', 'nota'); final.setAttribute('role', 'status'); relatorio.after(final);
     let seq = 0;

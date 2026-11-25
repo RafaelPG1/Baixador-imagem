@@ -15,6 +15,7 @@ import json
 import os
 import re
 import shutil
+import threading
 import unicodedata
 import zipfile
 from pathlib import Path
@@ -121,7 +122,8 @@ def estado_dos_capitulos(raiz: Path, obra: str) -> List[Dict[str, Any]]:
         n = len(textos["unidades"]) if textos else 0
         feitas = len(ler_importadas(c["pasta"], textos)) if textos else 0
         saida.append({"rel": c["rel"], "rotulo": org.rotulo_capitulo(c["numero"], c["titulo"]), "numero": c["numero"], "textos": n, "importados": feitas,
-                      "completo": n > 0 and feitas == n, "incompleta": c.get("incompleta", 0)})
+                      "completo": n > 0 and feitas == n, "incompleta": c.get("incompleta", 0),
+                      "situacao": "nao_preparado" if not n else "completo" if feitas == n else "parcial" if feitas else "preparado"})
     return saida
 
 
@@ -141,6 +143,19 @@ def aguardando_da_biblioteca(raiz: Path) -> List[Dict[str, Any]]:
     prontos = {c["rel"] for c in _capitulos_da_biblioteca(Path(raiz))}
     return [{"rel": c["rel"], "nome": f"{c['obra']} · {org.rotulo_capitulo(c['numero'], c['titulo'])}"} for c in sorted(_todos(raiz), key=lambda c: (c["obra"] or "", _ordem(c)))
             if c["rel"] in prontos and not _concluido(c)]
+
+
+def conferir_mesma_obra(novos: Iterable[str], existentes: Iterable[str]) -> Optional[str]:
+    """Uma preparação é de UMA obra só. `novos`/`existentes` são `rel` (`Obra/Cap`). Devolve a mensagem de bloqueio, ou None se pode."""
+    def obras(rels: Iterable[str]) -> Dict[str, str]:
+        return {org._chave(r.split("/", 1)[0]): r.split("/", 1)[0] for r in rels}
+    novas, atuais = obras(novos), obras(existentes)
+    if len(novas) > 1:
+        return "Não é permitido misturar obras na mesma preparação. Os capítulos escolhidos são de: " + ", ".join(sorted(novas.values())) + ". Prepare uma obra de cada vez."
+    if atuais and not set(novas) <= set(atuais):
+        return (f"Não é permitido misturar obras na mesma preparação: já há capítulos preparados de “{', '.join(sorted(atuais.values()))}” e você escolheu “{', '.join(novas.values())}”. "
+                "Conclua ou apague a tradução desses capítulos antes de preparar outra obra.")
+    return None
 
 
 # --------------------------------------------------------------------------- exportar
@@ -258,8 +273,12 @@ def analisar(raiz: Path, conteudos: List[str]) -> Dict[str, Any]:
                 anterior["quebrada"] = True                    # texto solto colado logo abaixo de uma fala: estrutura alterada
             else:
                 estranhas.append(s[:80])
-    por_codigo = {c["textos"]["codigo"]: c for c in _capitulos_da_biblioteca(raiz)}
-    codigos_desconhecidos = sorted({r["codigo"] for r in registros if r["codigo"] not in por_codigo})
+    grupos: Dict[str, List[Dict[str, Any]]] = {}
+    for c in _capitulos_da_biblioteca(raiz):
+        grupos.setdefault(c["textos"]["codigo"], []).append(c)
+    por_codigo = {k: v[0] for k, v in grupos.items() if len(v) == 1}
+    ambiguos = {k: [c["rel"] for c in v] for k, v in grupos.items() if len(v) > 1 and any(r["codigo"] == k for r in registros)}   # mesmo código em dois capítulos: não dá para saber de quem é a fala
+    codigos_desconhecidos = sorted({r["codigo"] for r in registros if r["codigo"] not in grupos})
     capitulos: Dict[str, Dict[str, Any]] = {}
     for codigo, cap in por_codigo.items():
         esperados = {u["id"]: u for u in cap["textos"]["unidades"]}
@@ -271,6 +290,7 @@ def analisar(raiz: Path, conteudos: List[str]) -> Dict[str, Any]:
         for r in deles:
             ocorrencias.setdefault(r["id"], []).append(r)
         novas, desconhecidos, duplicados, quebrados, vazios, repetidos_iguais, iguais, com_letras = {}, [], [], [], [], 0, [], 0
+        validas, mantidas = [], []
         for i, rs in ocorrencias.items():
             if i not in esperados:
                 desconhecidos.append(i); continue
@@ -281,8 +301,11 @@ def analisar(raiz: Path, conteudos: List[str]) -> Dict[str, Any]:
                 quebrados.append(i); continue
             if not rs[0]["texto"]:
                 vazios.append(i); continue
-            if ja.get(i, {}).get("t") == rs[0]["texto"]:
-                continue                                       # já importada igual: não conta de novo
+            validas.append(i)
+            if i in ja:
+                if ja[i]["t"] != rs[0]["texto"]:
+                    mantidas.append(i)                         # já tinha tradução válida: a primeira vale, nunca é sobrescrita
+                continue
             novas[i] = {"t": rs[0]["texto"], "h": esperados[i]["hash"]}
         for i in novas:
             if any(ch.isalpha() for ch in esperados[i]["fonte"]):
@@ -291,16 +314,22 @@ def analisar(raiz: Path, conteudos: List[str]) -> Dict[str, Any]:
                     iguais.append(i)
         original_reenviado = bool(com_letras) and len(iguais) / com_letras >= LIMITE_IGUAIS
         if original_reenviado:
-            novas = {}                                         # o texto original voltou sem tradução: nada deste capítulo entra
+            novas, validas = {}, []                            # o texto original voltou sem tradução: nada deste capítulo entra
         cobertos = set(ja) | set(novas)
         faltam = [i for i in esperados if i not in cobertos]
+        rotulo = org.rotulo_capitulo(cap["numero"], cap["titulo"])
+        mensagem = f"{rotulo}: {len(esperados)} identificadores esperados. {len(cobertos & set(esperados))} traduções válidas ({len(validas)} recebidas agora). " + (
+            f"{len(faltam)} identificador(es) ausente(s)." if faltam else "Nenhum ausente.")
         capitulos[cap["rel"]] = {
-            "rel": cap["rel"], "rotulo": org.rotulo_capitulo(cap["numero"], cap["titulo"]), "esperados": len(esperados), "ja_importados": len(ja), "novas": len(novas),
+            "rel": cap["rel"], "rotulo": rotulo, "codigo": codigo, "mensagem": mensagem, "recebidas": len(validas), "mantidas": mantidas, "esperados": len(esperados), "ja_importados": len(ja), "novas": len(novas),
             "faltam": faltam, "desconhecidos": desconhecidos, "duplicados": duplicados, "quebrados": quebrados, "vazios": vazios, "repetidos_iguais": repetidos_iguais,
             "original_reenviado": original_reenviado, "iguais_ao_original": iguais,
             "completo": not faltam, "_novas": novas, "_pasta": cap["pasta"], "_textos": cap["textos"],
         }
-    return {"capitulos": capitulos, "linhas": len(registros), "linhas_fora_da_estrutura": _amostra(estranhas), "total_fora": len(estranhas), "codigos_desconhecidos": codigos_desconhecidos, "introducao_ignorada": intro}
+    return {"capitulos": capitulos, "linhas": len(registros), "linhas_fora_da_estrutura": _amostra(estranhas), "total_fora": len(estranhas), "codigos_desconhecidos": codigos_desconhecidos, "codigos_ambiguos": ambiguos, "introducao_ignorada": intro}
+
+
+_TRAVA_GRAVAR = threading.Lock()
 
 
 def gravar(analise: Dict[str, Any]) -> List[str]:
@@ -309,11 +338,13 @@ def gravar(analise: Dict[str, Any]) -> List[str]:
     for c in analise["capitulos"].values():
         pasta, textos = c["_pasta"], c["_textos"]
         if c["novas"]:
-            todas = {**ler_importadas(pasta, textos), **c["_novas"]}
-            alvo = _dir_web(pasta) / "importadas.json"
-            tmp = alvo.with_suffix(".json.tmp")
-            tmp.write_text(json.dumps({"versao": 1, "codigo": textos["codigo"], "traducoes": todas}, ensure_ascii=False, indent=1), encoding="utf-8")
-            os.replace(tmp, alvo)
+            with _TRAVA_GRAVAR:                                # duas importações ao mesmo tempo não perdem traduções uma da outra
+                antigas = ler_importadas(pasta, textos)
+                todas = {**antigas, **{i: v for i, v in c["_novas"].items() if i not in antigas}}   # tradução válida já importada nunca é sobrescrita
+                alvo = _dir_web(pasta) / "importadas.json"
+                tmp = alvo.with_suffix(".json.tmp")
+                tmp.write_text(json.dumps({"versao": 1, "codigo": textos["codigo"], "traducoes": todas}, ensure_ascii=False, indent=1), encoding="utf-8")
+                os.replace(tmp, alvo)
             shutil.rmtree(Path(pasta) / "traducao.nova" / "etapa4b", ignore_errors=True)   # a etapa de tradução precisa refazer com o que chegou
         if c["completo"]:
             completos.append(c["rel"])
@@ -321,7 +352,10 @@ def gravar(analise: Dict[str, Any]) -> List[str]:
 
 
 def relatorio(analise: Dict[str, Any]) -> Dict[str, Any]:
-    """A análise sem os campos internos, pronta para JSON."""
-    caps = [{k: (_amostra(v) if k in ("faltam", "desconhecidos", "duplicados", "quebrados", "vazios", "iguais_ao_original") else v) for k, v in c.items() if not k.startswith("_")} | {"qtd_faltam": len(c["faltam"])}
+    """A análise sem os campos internos, pronta para JSON. Ausentes, desconhecidos e duplicados vêm COMPLETOS (a pessoa precisa ver exatamente quais)."""
+    completas = ("faltam", "desconhecidos", "duplicados")
+    caps = [{k: (v if k in completas else _amostra(v) if k in ("quebrados", "vazios", "iguais_ao_original", "mantidas") else v) for k, v in c.items() if not k.startswith("_")}
+            | {"qtd_faltam": len(c["faltam"]), "ausentes": [f"[{c['codigo']}:{i}]" for i in c["faltam"]]}
             for c in analise["capitulos"].values()]
-    return {"capitulos": caps, "linhas": analise["linhas"], "linhas_fora_da_estrutura": analise["linhas_fora_da_estrutura"], "total_fora": analise["total_fora"], "codigos_desconhecidos": analise["codigos_desconhecidos"], "introducao_ignorada": analise["introducao_ignorada"]}
+    return {"capitulos": caps, "linhas": analise["linhas"], "linhas_fora_da_estrutura": analise["linhas_fora_da_estrutura"], "total_fora": analise["total_fora"],
+            "codigos_desconhecidos": analise["codigos_desconhecidos"], "codigos_ambiguos": analise["codigos_ambiguos"], "introducao_ignorada": analise["introducao_ignorada"]}

@@ -627,7 +627,18 @@ class Manipulador(BaseHTTPRequestHandler):
         tarefa = self.server.traducao  # type: ignore[attr-defined]
         raiz: Path = self.server.raiz  # type: ignore[attr-defined]
         lote = str(dados.get("lote", ""))
-        cfg = {**config.ler(), "motor": "web"} if dados.get("motor") == "web" else None     # só esta tarefa usa o motor "web"; a configuração geral não muda
+        web = dados.get("motor") == "web"
+        cfg = {**config.ler(), "motor": "web"} if web else None     # só esta tarefa usa o motor "web"; a configuração geral não muda
+
+        def iniciar(lista: List[Path]) -> None:
+            if not web:
+                return tarefa.iniciar_lote(lista, cfg=cfg)
+            rels = [f"{p.parent.name}/{p.name}" for p in lista]
+            existentes = tarefa.rels_em_preparacao() | {a["rel"] for a in web_ia.aguardando_da_biblioteca(raiz)}   # a preparação inclui o que já está pronto no disco
+            bloqueio = web_ia.conferir_mesma_obra(rels, existentes)
+            if bloqueio:
+                raise ErroBaixador(bloqueio)
+            tarefa.preparar_web(lista)                           # entra na preparação existente, sem refazer nem duplicar os capítulos dela
         try:
             if dados.get("motor") == "web":                              # preparar só o que ainda precisa de tradução
                 alvo = [str(r)[:300] for r in dados["rels"]] if isinstance(dados.get("rels"), list) else []
@@ -645,19 +656,19 @@ class Manipulador(BaseHTTPRequestHandler):
                 ]
                 if not lista:
                     return self._negar(404, "Nenhum capítulo para traduzir.")
-                tarefa.iniciar_lote(lista, cfg=cfg)
+                iniciar(lista)
                 return self._json(200, {"ok": True, "conjuntos": len(lista)})
             if isinstance(dados.get("rels"), list):                      # capítulos escolhidos à mão (traduzir de novo)
                 pedidos = {str(r)[:300] for r in dados["rels"]}
                 lista = [raiz / c["rel"] for o in biblioteca.listar(raiz)["obras"] for c in o["capitulos"] if c["rel"] in pedidos]
                 if not lista:
                     return self._negar(404, "Nenhum dos capítulos escolhidos foi encontrado.")
-                tarefa.iniciar_lote(lista, cfg=cfg)
+                iniciar(lista)
                 return self._json(200, {"ok": True, "conjuntos": len(lista)})
             achado = next((c for o in biblioteca.listar(raiz)["obras"] for c in o["capitulos"] if c["rel"] == str(dados.get("rel", ""))), None)
             if achado is None:
                 return self._negar(404, "Capítulo não encontrado. Baixe as imagens antes de traduzir.")
-            tarefa.iniciar(raiz / achado["rel"], cfg=cfg)
+            iniciar([raiz / achado["rel"]])
         except RuntimeError as erro:
             return self._negar(409, str(erro))
         except ErroBaixador as erro:

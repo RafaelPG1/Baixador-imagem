@@ -221,23 +221,79 @@ class TarefaTraducao:
             self._thread = threading.Thread(target=self._rodar, args=(lista, cfg), daemon=True)   # `lista` é a mesma de `_pastas`: pode crescer
             self._thread.start()
 
-    def iniciar_ou_enfileirar_web(self, pastas: List[Path]) -> int:
-        """Motor web: capítulos com todas as traduções importadas. Sem tarefa rodando, começa uma; com uma preparação web em andamento,
-        furam a fila: são os próximos depois do capítulo que está sendo preparado agora, que nunca é interrompido (sem repetir quem já está lá). Com outro motor rodando, levanta RuntimeError: o motor errado não pode pegá-los."""
+    @staticmethod
+    def _rel(pasta: Path) -> str:
+        return f"{Path(pasta).parent.name}/{Path(pasta).name}"
+
+    def _colocar_web(self, pastas: List[Path], importado: bool) -> int:
+        """(sob a trava) Põe cada capítulo na fila usando o registro que ele JÁ tem (mesmo `rel`): só cria registro novo se não existe.
+        `importado`: a tradução chegou, então quem está "aguardando" volta à fila e fura a preparação dos demais (prio).
+        Sem `importado` (preparar), quem já está preparado ("aguardando") ou na fila não entra de novo. Devolve quantos entraram na fila."""
+        n = 0
+        for p in map(Path, pastas):
+            rel = self._rel(p)
+            k = next((k for k in range(len(self.itens) - 1, -1, -1) if self.itens[k]["rel"] == rel and self.itens[k]["estado"] != "refeito"), None)
+            if k is None:
+                item = {"nome": self._nome_item(p), "rel": rel, "estado": "fila", "etapa": "", "feitas": 0, "total": ESCALA}
+                self.itens.append({**item, "prio": True} if importado else item)
+                self._pastas.append(p)
+                self.capitulos += 1
+                n += 1
+                continue
+            it, est = self.itens[k], self.itens[k]["estado"]
+            if est == "fila" and importado:
+                it["prio"] = True                                  # já esperava na fila: passa à frente
+            if est in ("fila", "traduzindo") or (est == "aguardando" and not importado):
+                continue
+            if est == "aguardando":
+                self.aguardando = max(0, self.aguardando - 1)
+            if est == "pronto":
+                self.prontos = max(0, self.prontos - 1)            # ainda tem textos pendentes: o "pronto" era velho
+            elif est != "falhou":
+                self.capitulos += 1                                # cancelado/aguardando tinham saído da conta
+            it.update(estado="fila", etapa="", feitas=0, oculto=False)
+            it.pop("motivo", None)
+            if importado:
+                it["prio"] = True
+            else:
+                it.pop("prio", None)
+            self._pastas[k] = p
+            self._pulados.discard(k)
+            n += 1
+        return n
+
+    def iniciar_ou_enfileirar_web(self, pastas: List[Path], importado: bool = True) -> int:
+        """Motor web: põe capítulos na fila da tarefa web, sempre no registro que já existe (sem duplicar). Com uma preparação web em
+        andamento, entram na fila dela (importados furam a fila, depois do capítulo que está sendo preparado agora, que nunca é
+        interrompido). Sem tarefa rodando, uma nova começa MANTENDO os registros anteriores. Com outro motor rodando, levanta RuntimeError."""
         with self._lock:
-            if self.estado == "executando" and self._cfg.get("motor") == "web" and not self._fechada and not self._parar.is_set():
-                ativos = {it["rel"] for it in self.itens if it["estado"] in ("fila", "traduzindo")}
-                for it in self.itens:
-                    if it["estado"] == "fila" and it["rel"] in {f"{Path(p).parent.name}/{Path(p).name}" for p in pastas}:
-                        it["prio"] = True                          # já esperava na fila: passa à frente também
-                novos = [Path(p) for p in pastas if f"{Path(p).parent.name}/{Path(p).name}" not in ativos]
-                for p in novos:
-                    self.itens.append({"nome": self._nome_item(p), "rel": f"{p.parent.name}/{p.name}", "estado": "fila", "etapa": "", "feitas": 0, "total": ESCALA, "prio": True})   # prio: furam a fila de preparação
-                    self._pastas.append(p)
-                    self.capitulos += 1
+            if self.estado == "executando":
+                if self._cfg.get("motor") != "web" or self._fechada or self._parar.is_set():
+                    raise RuntimeError("Já existe uma tradução em andamento.")
+                self._colocar_web(pastas, importado)
                 return len(pastas)
-        self.iniciar_lote(pastas, cfg={**config.ler(), "motor": "web"})
+            if not self._colocar_web(pastas, importado):
+                return len(pastas)
+            vivos = [it for it in self.itens if not it.get("oculto") and it["estado"] not in ("cancelado", "refeito")]
+            self.estado, self.log, self.feitas, self.total, self.modo, self.avisos = "executando", [], 0, ESCALA, "web", []
+            self.prontos = sum(it["estado"] == "pronto" for it in vivos)
+            self.aguardando = sum(it["estado"] == "aguardando" for it in vivos)
+            self.capitulos = sum(it["estado"] != "aguardando" for it in vivos)
+            self.inicio, self.fim, self.erro, self.resumo = time.time(), 0.0, None, None
+            self.pasta = next((self._pastas[k] for k, it in enumerate(self.itens) if it["estado"] == "fila"), self._pastas[0])
+            self._cfg, self._fechada = {**config.ler(), "motor": "web"}, False
+            self._parar, self._parar_item = threading.Event(), threading.Event()
+            self._thread = threading.Thread(target=self._rodar, args=(self._pastas, self._cfg), daemon=True)   # `_pastas` é a mesma lista dos itens: pode crescer
+            self._thread.start()
         return len(pastas)
+
+    def preparar_web(self, pastas: List[Path]) -> int:
+        """Preparar textos para a IA web: capítulos novos entram na preparação existente (ou começam uma), sem refazer os já preparados."""
+        return self.iniciar_ou_enfileirar_web(pastas, importado=False)
+
+    def rels_em_preparacao(self) -> set:
+        with self._lock:
+            return {it["rel"] for it in self.itens if not it.get("oculto") and it["estado"] in ("fila", "traduzindo", "aguardando")}
 
     @staticmethod
     def _nome_item(pasta: Path) -> str:
