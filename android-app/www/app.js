@@ -301,13 +301,45 @@
     });
   }
   function vazio(titulo, texto) { var v = el('div', 'vazio'); v.append(el('strong', '', titulo), el('span', '', texto)); return v; }
-  function sair() { soltarUrls(); document.body.classList.remove('leitor', 'original', 'conectar'); window.onscroll = null; }
+  function sair() { soltarUrls(); document.body.classList.remove('conectar'); }
   function marcarAba(nome) {
     document.querySelectorAll('#abas a').forEach(function (a) { if (a.dataset.aba === nome) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); });
   }
   var rotaAtual = 0;
   var vivo = function (eu) { return eu === rotaAtual; };
   var enc = encodeURIComponent;
+
+  /* ---------------- ajudantes de tela ---------------- */
+  function corObra(nome) { var h = 0; for (var i = 0; i < nome.length; i++) h = (h * 31 + nome.charCodeAt(i)) >>> 0; return 'var(--l' + (h % 6) + ')'; }
+  var ICONES = {
+    baixar: '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M7 11l5 5 5-5M4 20h16"/></svg>',
+    ok: '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>',
+    lixo: '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>',
+    voltar: '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg>',
+  };
+  function icone(nome) { var s = el('span'); s.style.display = 'inline-flex'; s.innerHTML = ICONES[nome]; return s.firstChild; }
+  function chip(texto, tipo) { return el('span', 'chip' + (tipo ? ' ' + tipo : ''), texto); }
+  function capaObra(nome, blob) {
+    var d = el('div', 'capa-img'); d.style.setProperty('--cor', corObra(nome));
+    if (blob) { var i = el('img'); i.alt = ''; i.src = url(blob); d.append(i); } else d.append(el('span', 'capa-inicial', (nome.trim()[0] || '?').toUpperCase()));
+    return d;
+  }
+  function voltarPara(href, texto) { var a = el('a', 'voltar'); a.href = href; a.append(icone('voltar'), document.createTextNode(texto)); return a; }
+  function segmentos(opcoes, atual, aoMudar) {                  // controle de filtro: [{id, texto}]
+    var d = el('div', 'seg'); d.setAttribute('role', 'group');
+    opcoes.forEach(function (o) {
+      var b = el('button', '', o.texto); b.type = 'button'; b.setAttribute('aria-pressed', o.id === atual ? 'true' : 'false');
+      b.addEventListener('click', function () { d.querySelectorAll('button').forEach(function (x) { x.setAttribute('aria-pressed', 'false'); }); b.setAttribute('aria-pressed', 'true'); aoMudar(o.id); });
+      d.append(b);
+    });
+    return d;
+  }
+  async function gravarMarca(id, completa) {                    // a cópia local guarda se foi baixada com a tradução concluída (evita baixar de novo à toa)
+    var c = await obter('caps', id); if (!c) return;
+    c.traducaoCompleta = !!completa; var d = await bd(), t = d.transaction('caps', 'readwrite'); t.objectStore('caps').put(c); await concluida(t);
+  }
+  var TR = window.Traduzidos;
+  function pl(n, um, varios) { return n + ' ' + (n === 1 ? um : varios); }
 
   /* ---------------- tela: conectar ---------------- */
   function telaConectar() {
@@ -381,12 +413,14 @@
     tela.replaceChildren();
     avisoAtualizacao(eu, tela);
     if (!dados.obras.length) { tela.append(vazio('O notebook ainda não tem obras', 'Baixe capítulos no programa e volte aqui.')); return; }
-    var grade = el('div', 'capas');
+    tela.append(el('h1', '', 'Obras no notebook'));
+    var grade = el('div', 'capas'); grade.style.marginTop = '14px';
     dados.obras.forEach(function (o) {
       var meus = locais.filter(function (c) { return c.obra === o.nome; }).length;
+      var feitos = o.capitulos.filter(function (c) { return TR.estado(c) === 'concluido'; }).length;
       var a = el('a', 'capa'); a.href = '#/online/' + enc(o.nome);
-      var img = el('div', 'capa-img'); img.append(el('span', 'capa-inicial', (o.nome.trim()[0] || '?').toUpperCase()));
-      a.append(img, el('span', 'capa-nome', o.nome), el('span', 'capa-sub', o.capitulos.length + ' cap.' + (meus ? ' · ' + meus + ' baixado' + (meus === 1 ? '' : 's') : '')));
+      var img = capaObra(o.nome);
+      a.append(img, el('span', 'capa-nome', o.nome), el('span', 'capa-sub', o.capitulos.length + ' cap. · ' + feitos + ' traduzido' + (feitos === 1 ? '' : 's') + (meus ? ' · ' + meus + ' no celular' : '')));
       grade.append(a);
       if (o.pasta && o.capa) {                                // capa, carregada depois (não trava a lista)
         fetchAuth('/api/capa?p=' + enc(o.pasta) + '&v=' + (o.capa_v || 0), { binario: true, tentativas: 1 }).then(function (r) { return r.blob(); }).then(function (b) {
@@ -407,74 +441,141 @@
     if (!obra) { aviso('Obra não encontrada no notebook.'); location.hash = '#/'; return; }
     var locais = {}; (await todos('caps')).forEach(function (c) { locais[c.id] = c; });
     if (!vivo(eu)) return;
-    var caps = obra.capitulos.slice().reverse();               // mais novo primeiro
-    var sel = new Set();
+    var antigos = obra.capitulos;                              // do mais antigo ao mais novo (ordem dos downloads)
+    var caps = antigos.slice().reverse();                      // na tela: mais novo primeiro
+    var sel = new Set(), filtro = 'todos', modoSel = false, ctlAtual = null, linhas = {};
     tela.replaceChildren();
-    var cab = el('div', 'barra-obra'); cab.append(el('h1', '', obra.nome));
-    var voltar = el('a', 'btn', '‹ Obras'); voltar.href = '#/'; cab.append(voltar);
-    var barra = el('div', 'barra-sel'); var contador = el('span', 'nota');
-    var bTodos = el('button', 'btn', 'Todos'), bNovos = el('button', 'btn', 'Não baixados'), bLimpar = el('button', 'btn', 'Limpar');
-    [bTodos, bNovos, bLimpar].forEach(function (b) { b.type = 'button'; });
-    barra.append(contador, bTodos, bNovos, bLimpar);
-    var ul = el('ul', 'lista'); var caixas = {}, titulos = {};
-    function pintarTag(c) {                                     // "baixado" / "tradução nova" ao lado do nome
-      var t = titulos[c.rel], velha = t.querySelector('.tag'), loc = locais[c.rel]; if (velha) velha.remove();
-      if (loc) { var novo = !(loc.traduzido || !c.traduzido); t.append(el('span', novo ? 'tag novo' : 'tag ok', novo ? 'tradução nova' : 'baixado')); }
+
+    var cab = el('div', 'obra-cab'), info = el('div'), resumo = el('p', 'nota');
+    var capa = capaObra(nome); info.append(el('h1', '', nome), resumo); cab.append(capa, info);
+    tela.append(voltarPara('#/', 'Obras'), cab);
+    if (obra.pasta && obra.capa) fetchAuth('/api/capa?p=' + enc(obra.pasta) + '&v=' + (obra.capa_v || 0), { binario: true, tentativas: 1 }).then(function (r) { return r.blob(); }).then(function (b) {
+      if (!vivo(eu)) return; var i = el('img'); i.alt = ''; i.src = url(b); capa.replaceChildren(i);
+    }).catch(function () {});
+
+    function contagens() { var p = TR.plano(antigos, locais, 'offline'); return { p: p, feitos: antigos.filter(function (c) { return TR.estado(c) === 'concluido'; }).length, noCel: antigos.filter(function (c) { return locais[c.rel]; }).length }; }
+    var nTrad = contagens().feitos;
+    var seg = segmentos([{ id: 'todos', texto: 'Todos ' + caps.length }, { id: 'trad', texto: 'Traduzidos ' + nTrad }, { id: 'novos', texto: 'Não baixados' }], filtro, function (f) { filtro = f; desenhar(); });
+    var ferr = el('div', 'ferramentas'), contador = el('span', 'nota');
+    var bSel = el('button', 'btn', 'Selecionar'); bSel.type = 'button';
+    var bVis = el('button', 'btn', 'Marcar visíveis'); bVis.type = 'button'; bVis.hidden = true;
+    var gSel = el('div', 'topo-acoes'); gSel.append(bVis, bSel); ferr.append(contador, gSel);
+    var ul = el('ul', 'lista'); ul.style.setProperty('--cor', corObra(nome));
+
+    function visivel(c) { return filtro === 'todos' || (filtro === 'trad' ? TR.estado(c) === 'concluido' : !locais[c.rel]); }
+    function desenhar() {
+      ul.replaceChildren(); linhas = {};
+      var vis = caps.filter(visivel);
+      if (!vis.length) ul.append(vazio(filtro === 'trad' ? 'Nenhum capítulo traduzido' : 'Nada por aqui', filtro === 'trad' ? 'Traduza capítulos no notebook e volte aqui.' : 'Todos os capítulos já estão no celular.'));
+      vis.forEach(function (c) {
+        var e = TR.estado(c), loc = locais[c.rel];
+        var li = el('li', 'item' + (e === 'concluido' ? ' concluido' : '')); linhas[c.rel] = li;
+        if (modoSel) {
+          var marca = el('label', 'marca-cap'), cx = el('input'); cx.type = 'checkbox'; cx.checked = sel.has(c.rel); cx.setAttribute('aria-label', 'Selecionar ' + (c.rotulo || c.rel));
+          cx.addEventListener('change', function () { if (cx.checked) sel.add(c.rel); else sel.delete(c.rel); atualizar(); });
+          marca.append(cx); li.append(marca);
+        }
+        var a = el('a', 'cap'); a.href = 'leitor.html?c=' + enc(c.rel); a.setAttribute('aria-label', 'Ler ' + (c.rotulo || c.rel));
+        var s = el('span', 'cap-s');
+        s.append(el('span', '', c.imagens + ' pág.'), e === 'concluido' ? chip('Traduzido', 'ok') : e === 'incompleto' ? chip('Tradução parcial · ' + c.incompleta + (c.incompleta === 1 ? ' fala' : ' falas') + ' sem traduzir', 'aviso') : chip('Só original'));
+        if (loc) s.append(loc.traduzido || !c.traduzido ? chip('No celular', 'info') : chip('Tradução nova', 'aviso'));
+        a.append(el('span', 'cap-t', c.rotulo || c.rel), s); li.append(a);
+        if (!modoSel && e === 'concluido') {                   // download individual do capítulo traduzido
+          var jaTem = TR.localServe(loc), b = el('button', 'acao'); b.type = 'button';
+          b.append(icone(jaTem ? 'ok' : 'baixar')); b.setAttribute('aria-label', (jaTem ? 'Já no celular: ' : 'Baixar traduzido: ') + (c.rotulo || c.rel)); b.title = jaTem ? 'Já está no celular' : 'Baixar este capítulo traduzido';
+          b.disabled = jaTem || !!ctlAtual; b.dataset.rel = c.rel;
+          b.addEventListener('click', function () { rodar([c], 'offline'); });
+          li.append(b);
+        }
+        ul.append(li);
+      });
+      atualizar();
     }
-    caps.forEach(function (c) {
-      var li = el('li', 'linha-sel'), marca = el('label', 'marca-cap');
-      var cx = el('input'); cx.type = 'checkbox'; cx.setAttribute('aria-label', 'Selecionar ' + (c.rotulo || c.rel)); caixas[c.rel] = cx; marca.append(cx);
-      var lab = el('a', 'cap'); lab.href = 'leitor.html?c=' + enc(c.rel); lab.setAttribute('aria-label', 'Ler ' + (c.rotulo || c.rel));
-      var t = el('span', 'cap-t', c.rotulo || c.rel); titulos[c.rel] = t; pintarTag(c);
-      var s = el('span', 'cap-s' + (c.traduzido ? ' ok' : ''), c.imagens + ' pág. · ' + (c.traduzido ? (c.incompleta ? 'tradução incompleta' : 'traduzido') : 'só original'));
-      lab.append(t, s); li.append(marca, lab); ul.append(li);
-      cx.addEventListener('change', function () { if (cx.checked) sel.add(c.rel); else sel.delete(c.rel); atualizar(); });
-    });
-    var fixa = el('div', 'fixa-baixo');
-    var bOff = el('button', 'btn principal grande'), bZip = el('button', 'btn grande');
-    bOff.type = bZip.type = 'button';
-    var bCancelar = el('button', 'btn perigo', 'Cancelar'); bCancelar.type = 'button'; bCancelar.hidden = true;
-    var prog = el('progress'); prog.hidden = true; prog.max = 1; prog.value = 0;
-    var txt = el('div', 'progresso-txt'); txt.setAttribute('role', 'status');
-    fixa.append(bOff, bZip, prog, txt, bCancelar);
+
+    var fixa = el('div', 'fixa-baixo'), txt = el('div', 'progresso-txt'), prog = el('progress'), linha = el('div', 'linha');
+    txt.setAttribute('role', 'status'); prog.hidden = true; prog.max = 1; prog.value = 0;
+    var bTrad = el('button', 'btn principal grande'), bOff = el('button', 'btn principal'), bZip = el('button', 'btn'), bCancelar = el('button', 'btn perigo', 'Cancelar');
+    [bTrad, bOff, bZip, bCancelar].forEach(function (b) { b.type = 'button'; });
+    bCancelar.hidden = true; linha.append(bTrad, bOff, bZip, bCancelar); fixa.append(txt, prog, linha);
+
+    var ultimoTxt = '';
     function atualizar() {
-      var n = sel.size; contador.textContent = n + ' de ' + caps.length + ' selecionado' + (n === 1 ? '' : 's');
-      bOff.textContent = 'Baixar para ler offline' + (n ? ' (' + n + ')' : ''); bZip.textContent = 'Salvar ZIP no celular' + (n ? ' (' + n + ')' : '');
-      bOff.disabled = bZip.disabled = !n || !!ctlAtual;
+      var k = contagens(), n = sel.size;
+      resumo.textContent = antigos.length + ' capítulos · ' + k.feitos + ' traduzido' + (k.feitos === 1 ? '' : 's') + ' · ' + k.noCel + ' no celular';
+      contador.textContent = modoSel ? n + ' de ' + caps.length + ' selecionado' + (n === 1 ? '' : 's') : caps.filter(visivel).length + ' capítulo' + (caps.filter(visivel).length === 1 ? '' : 's');
+      bSel.textContent = modoSel ? 'Concluir' : 'Selecionar'; bVis.hidden = !modoSel;
+      var ocupado = !!ctlAtual;
+      bTrad.hidden = modoSel || ocupado; bOff.hidden = bZip.hidden = !modoSel || ocupado; bCancelar.hidden = !ocupado; prog.hidden = !ocupado;
+      var q = k.p.baixar.length;
+      bTrad.textContent = q ? 'Baixar traduzidos (' + q + ')' : k.feitos ? 'Traduzidos já estão no celular' : 'Nenhum capítulo traduzido';
+      bTrad.disabled = !q;
+      bOff.textContent = 'Ler offline' + (n ? ' (' + n + ')' : ''); bZip.textContent = 'Salvar ZIP' + (n ? ' (' + n + ')' : '');
+      bOff.disabled = bZip.disabled = !n;
+      if (!ocupado) txt.textContent = ultimoTxt || (modoSel ? 'Marque os capítulos e escolha como baixar.' : '');
+      txt.hidden = !txt.textContent;
+      ul.querySelectorAll('.acao[data-rel]').forEach(function (b) { if (ocupado) b.disabled = true; else b.disabled = TR.localServe(locais[b.dataset.rel]); });
     }
-    function marcar(fn) { caps.forEach(function (c) { var m = fn(c); caixas[c.rel].checked = m; if (m) sel.add(c.rel); else sel.delete(c.rel); }); atualizar(); }
-    bTodos.addEventListener('click', function () { marcar(function () { return true; }); });
-    bNovos.addEventListener('click', function () { marcar(function (c) { var l = locais[c.rel]; return !l || (c.traduzido && !l.traduzido); }); });
-    bLimpar.addEventListener('click', function () { marcar(function () { return false; }); });
-    var ctlAtual = null;
-    function escolhidos() { return caps.filter(function (c) { return sel.has(c.rel); }).reverse(); }   // do mais antigo para o mais novo
-    async function rodar(fazer) {
-      var lista = escolhidos(); if (!lista.length || ctlAtual) return;
-      ctlAtual = new AbortController(); bCancelar.hidden = false; prog.hidden = false; atualizar(); var feitos = 0, falhas = [];
+    bSel.addEventListener('click', function () { modoSel = !modoSel; if (!modoSel) sel.clear(); ultimoTxt = ''; desenhar(); });
+    bVis.addEventListener('click', function () { caps.filter(visivel).forEach(function (c) { sel.add(c.rel); }); desenhar(); });
+
+    async function rodar(lista, modo) {                        // um capítulo por vez; a tela segue livre (rolar, abrir, cancelar)
+      if (!lista.length || ctlAtual) return 0;
+      ctlAtual = new AbortController(); ultimoTxt = ''; atualizar(); var feitos = 0, falhas = [];
       try {
         for (var i = 0; i < lista.length; i++) {
           if (ctlAtual.signal.aborted) break;
-          var c = lista[i]; txt.textContent = (i + 1) + '/' + lista.length + ' · ' + c.rotulo; prog.value = 0; prog.max = 1;
-          try { await fazer(c, ctlAtual.signal, function (rec, tot) { prog.max = tot || 1; prog.value = tot ? rec : 0; }); feitos++; }
-          catch (e) { if (e && e.name === 'AbortError') break; falhas.push(c.rotulo + ': ' + mensagemErro(e)); }
+          var c = lista[i], li = linhas[c.rel];
+          txt.textContent = (i + 1) + '/' + lista.length + ' · ' + (c.rotulo || c.rel); txt.hidden = false; prog.value = 0; prog.max = 1; if (li) li.classList.add('baixando');
+          try {
+            await (modo === 'zip' ? salvarZip(obra, c, ctlAtual.signal, avancar) : baixarOffline(c, ctlAtual.signal, avancar));
+            feitos++; if (modo !== 'zip' && li) li.classList.remove('baixando');
+          } catch (e) { if (e && e.name === 'AbortError') break; falhas.push((c.rotulo || c.rel) + ': ' + mensagemErro(e)); }
+          if (li) li.classList.remove('baixando');
         }
-      } finally { var cancelou = ctlAtual.signal.aborted; ctlAtual = null; bCancelar.hidden = true; prog.hidden = true; atualizar();
-        txt.textContent = (cancelou ? 'Cancelado. ' : '') + feitos + ' de ' + lista.length + ' concluído(s).' + (falhas.length ? ' Falhou: ' + falhas[0] : ''); }
+      } finally {
+        var cancelou = ctlAtual.signal.aborted; ctlAtual = null;
+        ultimoTxt = (cancelou ? 'Cancelado. ' : '') + feitos + ' de ' + lista.length + ' concluído' + (feitos === 1 ? '' : 's') + '.' + (falhas.length ? ' Falhou: ' + falhas[0] : '');
+        desenhar();
+      }
+      if (feitos) aviso(modo === 'zip' ? feitos + ' ZIP(s) salvo(s) em Download/Baixador/' + obra.nome + '.' : feitos + ' capítulo(s) no celular. Já dá para ler sem internet na aba Baixadas.');
       return feitos;
     }
+    function avancar(rec, tot) { prog.max = tot || 1; prog.value = tot ? rec : 0; }
+    async function baixarOffline(c, sinal, prg) {
+      var blob = await baixarBlob('/api/app/exportar?rel=' + enc(c.rel), prg, sinal);
+      txt.textContent += ' · guardando…'; await importarUm(blob);
+      await gravarMarca(c.rel, TR.estado(c) === 'concluido'); locais[c.rel] = await obter('caps', c.rel);
+    }
     bCancelar.addEventListener('click', function () { if (ctlAtual) ctlAtual.abort(); });
-    bOff.addEventListener('click', async function () {
-      var f = await rodar(async function (c, sinal, prg) {
-        var blob = await baixarBlob('/api/app/exportar?rel=' + enc(c.rel), prg, sinal);
-        txt.textContent += ' · guardando…'; await importarUm(blob); locais[c.rel] = await obter('caps', c.rel); pintarTag(c);
-      });
-      if (f) aviso(f + ' capítulo(s) baixado(s). Já dá para ler sem internet na aba Baixadas.');
+    function escolhidos() { return antigos.filter(function (c) { return sel.has(c.rel); }); }   // do mais antigo para o mais novo
+    bOff.addEventListener('click', function () { rodar(escolhidos(), 'offline'); });
+    bZip.addEventListener('click', function () { rodar(escolhidos(), 'zip'); });
+
+    /* Baixar todos os traduzidos: a folha mostra exatamente o que entra e o que fica de fora, antes de começar. */
+    bTrad.addEventListener('click', function () {
+      var off = TR.plano(antigos, locais, 'offline'), zip = TR.plano(antigos, locais, 'zip');
+      if (!off.baixar.length) return;
+      var fundo = el('div', 'folha-fundo'), f = el('div', 'folha'); f.setAttribute('role', 'dialog'); f.setAttribute('aria-modal', 'true');
+      var fechar = function () { fundo.remove(); };
+      fundo.addEventListener('click', function (ev) { if (ev.target === fundo) fechar(); });
+      var lista = el('ul'); off.baixar.forEach(function (c) { lista.append(el('li', '', c.rotulo || c.rel)); });
+      f.append(el('h2', '', 'Baixar traduzidos de ' + nome), el('p', 'nota', off.baixar.length + ' capítulo' + (off.baixar.length === 1 ? '' : 's') + ' com tradução concluída ' + (off.baixar.length === 1 ? 'será baixado' : 'serão baixados') + ', do mais antigo ao mais novo:'), lista);
+      var notas = [];
+      var nJa = off.jaNoCelular.length, nPar = off.incompletos.length, nOri = off.semTraducao.length;
+      if (nJa) notas.push(nJa === 1 ? '1 capítulo já está no celular com a tradução concluída e não será baixado de novo.' : nJa + ' capítulos já estão no celular com a tradução concluída e não serão baixados de novo.');
+      if (nPar) notas.push((nPar === 1 ? '1 capítulo com tradução parcial fica de fora: ' : nPar + ' capítulos com tradução parcial ficam de fora: ') + off.incompletos.map(function (c) { return c.rotulo || c.rel; }).join(', ') + '.');
+      if (nOri) notas.push(nOri === 1 ? '1 capítulo sem tradução fica de fora.' : nOri + ' capítulos sem tradução ficam de fora.');
+      notas.forEach(function (t) { f.append(el('p', 'nota', t)); });
+      var acoes = el('div', 'acoes');
+      var go = el('button', 'btn principal grande', 'Baixar para ler offline (' + off.baixar.length + ')'), zp = el('button', 'btn', 'Salvar ZIPs no celular (' + zip.baixar.length + ')'), nao = el('button', 'btn', 'Cancelar');
+      [go, zp, nao].forEach(function (b) { b.type = 'button'; });
+      go.addEventListener('click', function () { fechar(); rodar(off.baixar, 'offline'); });
+      zp.addEventListener('click', function () { fechar(); rodar(zip.baixar, 'zip'); });
+      nao.addEventListener('click', fechar);
+      acoes.append(go, zp, nao); f.append(acoes); fundo.append(f); document.body.append(fundo); go.focus();
     });
-    bZip.addEventListener('click', async function () {
-      var f = await rodar(async function (c, sinal, prg) { await salvarZip(obra, c, sinal, prg); });
-      if (f) aviso(f + ' ZIP(s) salvo(s) em Download/Baixador/' + obra.nome + '.');
-    });
-    tela.append(cab, el('p', 'nota', 'Toque no capítulo para ler agora (direto do notebook, sem baixar). Use as caixas para baixar ou salvar ZIP.'), barra, ul, fixa); atualizar();
+
+    tela.append(seg, ferr, ul, fixa); desenhar();
   }
 
   /* Um ZIP por capítulo, em Download/Baixador/<obra>/ (nativo: direto no armazenamento, sem passar pela memória). */
@@ -505,13 +606,12 @@
       return;
     }
     obras.sort(function (a, b) { return a.nome.localeCompare(b.nome, 'pt', { sensitivity: 'base' }); });
-    var grade = el('div', 'capas');
+    tela.append(el('h1', '', 'Baixadas no celular'), el('p', 'nota', 'Leitura sem internet.'));
+    var grade = el('div', 'capas'); grade.style.marginTop = '14px';
     obras.forEach(function (o) {
-      var meus = caps.filter(function (c) { return c.obra === o.nome; });
+      var meus = caps.filter(function (c) { return c.obra === o.nome; }), tr = meus.filter(function (c) { return c.traduzido; }).length;
       var a = el('a', 'capa'); a.href = '#/obra/' + enc(o.nome);
-      var img = el('div', 'capa-img');
-      if (o.capa) { var i = el('img'); i.alt = ''; i.src = url(o.capa); img.append(i); } else img.append(el('span', 'capa-inicial', (o.nome.trim()[0] || '?').toUpperCase()));
-      a.append(img, el('span', 'capa-nome', o.nome), el('span', 'capa-sub', meus.length + ' capítulo' + (meus.length === 1 ? '' : 's') + ' · ' + meus.reduce(function (s, c) { return s + c.paginas; }, 0) + ' pág.'));
+      a.append(capaObra(o.nome, o.capa), el('span', 'capa-nome', o.nome), el('span', 'capa-sub', meus.length + ' cap. · ' + tr + ' traduzido' + (tr === 1 ? '' : 's') + ' · ' + meus.reduce(function (s, c) { return s + c.paginas; }, 0) + ' pág.'));
       grade.append(a);
     });
     tela.append(grade);
@@ -522,28 +622,37 @@
     var caps = ordenar((await todos('caps')).filter(function (c) { return c.obra === nome; })).reverse(); if (!vivo(eu)) return;
     tela.replaceChildren();
     if (!caps.length) { location.hash = '#/baixadas'; return; }
-    var cab = el('div', 'barra-obra'); cab.append(el('h1', '', nome));
-    var voltar = el('a', 'btn', '‹ Baixadas'); voltar.href = '#/baixadas';
     var excluir = el('button', 'btn perigo', 'Excluir obra'); excluir.type = 'button';
     excluir.addEventListener('click', async function () {
       if (!confirm('Excluir “' + nome + '” do celular? Só as cópias baixadas são apagadas; o notebook não é afetado.')) return;
       for (var i = 0; i < caps.length; i++) await apagarCapitulo(caps[i].id);
       await limparObrasVazias(); aviso('Obra excluída do celular.'); location.hash = '#/baixadas';
     });
-    var g = el('div', 'topo-acoes'); g.append(voltar, excluir); cab.append(g);
-    var ul = el('ul', 'lista');
-    caps.forEach(function (c) {
-      var li = el('li'); var a = el('a', 'cap'); a.href = 'leitor.html?c=' + enc(c.id);
-      var pos = lembrar('pos:' + c.id);
-      a.append(el('span', 'cap-t', c.rotulo || c.id), el('span', 'cap-s' + (c.traduzido ? ' ok' : ''), c.paginas + ' pág. · ' + (c.traduzido ? 'traduzido' : 'só original') + (pos ? ' · parou na pág. ' + (Number(pos) + 1) : '')));
-      var x = el('button', 'x', '✕'); x.type = 'button'; x.setAttribute('aria-label', 'Excluir ' + (c.rotulo || c.id)); x.title = 'Excluir este capítulo do celular';
-      x.addEventListener('click', async function () {
-        if (!confirm('Excluir “' + (c.rotulo || c.id) + '” do celular?')) return;
-        await apagarCapitulo(c.id); await limparObrasVazias(); aviso('Capítulo excluído.'); rotear();
+    var cab = el('div', 'obra-cab'), info = el('div'), nTr = caps.filter(function (c) { return c.traduzido; }).length;
+    var obraSalva = (await todos('obras')).find(function (o) { return o.nome === nome; });
+    info.append(el('h1', '', nome), el('p', 'nota', caps.length + ' capítulos · ' + nTr + ' traduzido' + (nTr === 1 ? '' : 's') + ' no celular')); cab.append(capaObra(nome, obraSalva && obraSalva.capa), info);
+    var filtro = 'todos', ul = el('ul', 'lista'); ul.style.setProperty('--cor', corObra(nome));
+    var seg = segmentos([{ id: 'todos', texto: 'Todos ' + caps.length }, { id: 'trad', texto: 'Traduzidos ' + nTr }], filtro, function (f) { filtro = f; desenhar(); });
+    function desenhar() {
+      ul.replaceChildren();
+      var vis = caps.filter(function (c) { return filtro === 'todos' || c.traduzido; });
+      if (!vis.length) ul.append(vazio('Nenhum capítulo traduzido', 'Baixe capítulos traduzidos na aba Notebook.'));
+      vis.forEach(function (c) {
+        var li = el('li', 'item'); var a = el('a', 'cap'); a.href = 'leitor.html?c=' + enc(c.id);
+        var pos = lembrar('pos:' + c.id), s = el('span', 'cap-s');
+        s.append(el('span', '', c.paginas + ' pág.'), !c.traduzido ? chip('Só original') : c.traducaoCompleta === false ? chip('Tradução parcial', 'aviso') : chip('Traduzido', 'ok'));
+        if (pos) s.append(el('span', '', 'parou na pág. ' + (Number(pos) + 1)));
+        a.append(el('span', 'cap-t', c.rotulo || c.id), s);
+        var x = el('button', 'acao perigo'); x.type = 'button'; x.append(icone('lixo')); x.setAttribute('aria-label', 'Excluir ' + (c.rotulo || c.id)); x.title = 'Excluir este capítulo do celular';
+        x.addEventListener('click', async function () {
+          if (!confirm('Excluir “' + (c.rotulo || c.id) + '” do celular?')) return;
+          await apagarCapitulo(c.id); await limparObrasVazias(); aviso('Capítulo excluído.'); rotear();
+        });
+        li.append(a, x); ul.append(li);
       });
-      li.append(a, x); ul.append(li);
-    });
-    tela.append(cab, ul);
+    }
+    desenhar();
+    tela.append(voltarPara('#/baixadas', 'Baixadas'), cab, seg, el('div', 'ferramentas'), ul, el('div', 'linha')); tela.lastChild.style.marginTop = '16px'; tela.lastChild.append(excluir);
   }
 
   /* ---------------- atualização do app (o notebook busca o APK novo no GitHub e entrega; o Android pede a confirmação) ---------------- */
