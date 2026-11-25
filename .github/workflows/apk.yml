@@ -58,21 +58,32 @@ jobs:
           VERSION_CODE: ${{ github.run_number }}
           VERSION_NAME: 1.0.${{ github.run_number }}
 
+      # A chave TEM que estar em Settings > Secrets and variables > Actions > aba "Secrets" (não "Variables"), com o nome KEYSTORE_BASE64.
+      # Sem ela o APK sairia com uma chave aleatória deste servidor e o Android recusaria a atualização: por isso o fluxo para aqui.
       - name: Chave de assinatura
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
         run: |
-          mkdir -p ~/.android
-          if [ -n "$KEYSTORE_BASE64" ]; then
-            echo "$KEYSTORE_BASE64" | base64 -d > ~/.android/debug.keystore
-            echo "ASSINATURA=chave fixa (atualiza por cima)" >> "$GITHUB_ENV"
-          else
-            echo "ASSINATURA=chave temporária (para atualizar, desinstale o app antes)" >> "$GITHUB_ENV"
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "::error::Segredo KEYSTORE_BASE64 ausente. Cadastre-o na aba Secrets (não Variables) em Settings > Secrets and variables > Actions."
+            exit 1
           fi
+          mkdir -p ~/.android
+          echo "$KEYSTORE_BASE64" | base64 -d > ~/.android/debug.keystore
+          # Falha aqui se o segredo não for um keystore válido com alias androiddebugkey e senha "android" (o que gerar_chave_apk.py cria).
+          keytool -list -v -keystore ~/.android/debug.keystore -storepass android -alias androiddebugkey > /tmp/chave.txt
+          FP=$(sed -n 's/^ *SHA256: *//p' /tmp/chave.txt | head -n1)
+          echo "Chave do segredo (SHA-256): $FP"
+          echo "KEYSTORE_SHA256=$FP" >> "$GITHUB_ENV"
 
       - name: Compilar
         working-directory: android-app/android
         run: ./gradlew assembleDebug --no-daemon
+
+      # O APK tem que sair assinado com a chave do segredo (KEYSTORE_SHA256 vem do passo anterior); se for outra, o fluxo falha.
+      - name: Conferir assinatura
+        run: |
+          python3 scripts/conferir_assinatura.py android/app/build/outputs/apk/debug/app-debug.apk | tee ../assinatura.txt
 
       - name: Publicar em Releases
         env:
@@ -82,4 +93,4 @@ jobs:
           gh release delete apk-latest --yes --cleanup-tag || true
           gh release create apk-latest BaixadorLeitor.apk --target "${{ github.sha }}" \
             --title "Baixador Leitor 1.0.${{ github.run_number }}" \
-            --notes "APK do app Android. Assinatura: ${ASSINATURA}."
+            --notes "APK do app Android. $(head -n1 ../assinatura.txt)"

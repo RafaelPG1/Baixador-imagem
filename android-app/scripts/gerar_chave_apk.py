@@ -38,6 +38,8 @@ def main() -> None:
     )
     p12 = pkcs12.serialize_key_and_certificates(ALIAS, chave, cert, None, serialization.BestAvailableEncryption(SENHA))
     saida.write_text(base64.b64encode(p12).decode("ascii"), encoding="utf-8")
+    impressao = cert.fingerprint(hashes.SHA256()).hex().upper()
+    print(f"Impressão digital SHA-256 da chave (cadastre como variável KEYSTORE_SHA256 no GitHub, em Variables):\n{impressao}")
     print(f"Pronto: {saida}\nAgora copie o conteúdo para o segredo KEYSTORE_BASE64 no GitHub (veja as instruções no topo deste script).")
 
 

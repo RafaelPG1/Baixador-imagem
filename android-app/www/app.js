@@ -672,6 +672,7 @@
     try { await SZ.instalarApk({ url: conf.base + '/api/app/apk', headers: { Authorization: 'Bearer ' + conf.chave }, id: 'apk' }); }
     catch (e) {
       if (e && (e.message === 'permissao' || e === 'permissao')) throw new Error('Libere “Instalar apps desconhecidos” para o Baixador Leitor na tela que abriu, volte ao app e toque em Baixar e instalar de novo.');
+      if (e && e.code === 'ASSINATURA') throw new Error(e.message + '\n\nPara atualizar sem apagar nada, o APK precisa ser assinado com a MESMA chave do app instalado: no GitHub, cadastre em KEYSTORE_BASE64 a chave original (o arquivo chave-apk.base64.txt guardado) e compile de novo. Se essa chave foi perdida, o Android só aceita o app novo depois de desinstalar o atual (as obras baixadas no celular se perdem; as do notebook continuam).');
       throw e;
     } finally { progressoNativo = null; }
   }
@@ -747,6 +748,8 @@
 
     var bSobre = el('section', 'bloco'); bSobre.append(el('h2', '', 'Sobre'));
     bSobre.append(el('p', 'nota', 'Versão ' + (window.APP_VERSAO === '__VERSAO__' ? 'de desenvolvimento' : window.APP_VERSAO) + '.'));
+    var SZi = plugin('SalvarZip');
+    if (SZi && SZi.infoApp) { var linhaApp = el('p', 'nota', ''); bSobre.append(linhaApp); SZi.infoApp().then(function (i) { linhaApp.textContent = 'Pacote ' + i.pacote + ' · versionCode ' + i.versionCode + ' · chave de assinatura ' + (i.assinatura || 'desconhecida') + '.'; }, function () {}); }
     bSobre.append(el('p', 'nota', 'Fora de casa: deixe o Tailscale ligado no celular e o notebook ligado, conectado e sem suspender.'));
     if (vivo(eu)) tela.append(bConexao, blocoAtualizacao(), bArm, bDados, bSobre);
   }

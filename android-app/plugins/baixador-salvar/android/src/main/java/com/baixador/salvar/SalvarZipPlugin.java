@@ -3,6 +3,10 @@ package com.baixador.salvar;
 import android.content.ContentResolver;
 import android.content.ContentValues;
 import android.content.Intent;
+import android.content.pm.PackageInfo;
+import android.content.pm.PackageManager;
+import android.content.pm.Signature;
+import android.content.pm.SigningInfo;
 import android.os.Build;
 import android.provider.Settings;
 import androidx.core.content.FileProvider;
@@ -221,6 +225,13 @@ public class SalvarZipPlugin extends Plugin {
                             arquivo.delete();
                             throw new java.io.IOException("download incompleto");
                         }
+                        try {
+                            conferirAtualizacao(arquivo);
+                        } catch (Conferencia.Recusa recusa) {
+                            arquivo.delete();
+                            call.reject(recusa.getMessage(), recusa.codigo);
+                            return;
+                        }
                         Uri uri = FileProvider.getUriForFile(getContext(), getContext().getPackageName() + ".baixadorfp", arquivo);
                         Intent instalar = new Intent(Intent.ACTION_VIEW);
                         instalar.setDataAndType(uri, "application/vnd.android.package-archive");
@@ -240,6 +251,58 @@ public class SalvarZipPlugin extends Plugin {
                 }
             }
         ).start();
+    }
+
+    // ------------------------------------------------------------------ conferência do APK antes de instalar
+
+    private static String sha256(byte[] dados) throws java.security.NoSuchAlgorithmException {
+        StringBuilder hex = new StringBuilder();
+        for (byte b : java.security.MessageDigest.getInstance("SHA-256").digest(dados)) hex.append(String.format("%02x", b));
+        return hex.toString();
+    }
+
+    /** Impressões digitais das assinaturas; historico=true inclui as anteriores da linhagem de rotação (como o Android faz ao atualizar). */
+    private static java.util.Set<String> assinaturas(SigningInfo info, boolean historico) throws java.security.NoSuchAlgorithmException {
+        java.util.Set<String> saida = new java.util.LinkedHashSet<>();
+        if (info == null) return saida;
+        Signature[] lista = historico && !info.hasMultipleSigners() ? info.getSigningCertificateHistory() : info.getApkContentsSigners();
+        if (lista != null) for (Signature a : lista) saida.add(sha256(a.toByteArray()));
+        return saida;
+    }
+
+    /** Lê o APK baixado como o Android lê (pacote, versionCode, assinatura) e compara com o app instalado. */
+    private void conferirAtualizacao(File apk) throws Conferencia.Recusa {
+        try {
+            PackageManager pm = getContext().getPackageManager();
+            PackageInfo novo = pm.getPackageArchiveInfo(apk.getAbsolutePath(), PackageManager.GET_SIGNING_CERTIFICATES);
+            if (novo == null) {
+                throw new Conferencia.Recusa("APK_INVALIDO", "O arquivo baixado não é um APK válido (corrompido ou incompleto). Tente baixar de novo.");
+            }
+            PackageInfo atual = pm.getPackageInfo(getContext().getPackageName(), PackageManager.GET_SIGNING_CERTIFICATES);
+            Conferencia.verificar(atual.packageName, atual.getLongVersionCode(), assinaturas(atual.signingInfo, false),
+                novo.packageName, novo.getLongVersionCode(), assinaturas(novo.signingInfo, true));
+        } catch (Conferencia.Recusa recusa) {
+            throw recusa;
+        } catch (Exception erro) {
+            throw new Conferencia.Recusa("CONFERENCIA", "Não consegui conferir o APK baixado: " + erro.getClass().getSimpleName() + ".");
+        }
+    }
+
+    /** Pacote, versão e impressão digital da assinatura do app instalado (aparece em Ajustes, para comparar com a chave do GitHub). */
+    @PluginMethod
+    public void infoApp(PluginCall call) {
+        try {
+            PackageInfo p = getContext().getPackageManager().getPackageInfo(getContext().getPackageName(), PackageManager.GET_SIGNING_CERTIFICATES);
+            java.util.Set<String> a = assinaturas(p.signingInfo, false);
+            JSObject r = new JSObject();
+            r.put("pacote", p.packageName);
+            r.put("versionCode", p.getLongVersionCode());
+            r.put("versionName", p.versionName);
+            r.put("assinatura", a.isEmpty() ? "" : Conferencia.curta(a.iterator().next()));
+            call.resolve(r);
+        } catch (Exception erro) {
+            call.reject("Não consegui ler os dados do app.");
+        }
     }
 
     // ------------------------------------------------------------------ rede nativa (fora do WebView)

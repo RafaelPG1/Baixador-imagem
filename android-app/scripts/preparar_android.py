@@ -1,5 +1,6 @@
 """Ajusta o projeto Android gerado por `npx cap add android` (a pasta android/ não fica no repositório).
 
+- assinatura do APK pela chave do fluxo (~/.android/debug.keystore), declarada no build.gradle;
 - minSdk 29 (o plugin SalvarZip grava em Download/ pelo MediaStore, sem pedir permissão de armazenamento);
 - versão do app = número da execução do fluxo (VERSION_CODE / VERSION_NAME);
 - sem backup automático do Android (a chave de pareamento não deve ir para a nuvem) e sem tráfego sem HTTPS.
@@ -30,6 +31,16 @@ def main() -> None:
     app = RAIZ / "app" / "build.gradle"
     trocar(app, r"versionCode\s+\d+", f"versionCode {codigo}")
     trocar(app, r'versionName\s+"[^"]*"', f'versionName "{nome}"')
+    # Chave de assinatura explícita (a que o fluxo grava em ~/.android/debug.keystore): não depende de onde o Gradle procura a chave de debug.
+    trocar(app, r"(?m)^android\s*\{", """android {
+    signingConfigs {
+        debug {
+            storeFile file(System.getProperty('user.home') + '/.android/debug.keystore')
+            storePassword 'android'
+            keyAlias 'androiddebugkey'
+            keyPassword 'android'
+        }
+    }""")
     manifesto = RAIZ / "app" / "src" / "main" / "AndroidManifest.xml"
     trocar(manifesto, r'android:allowBackup="true"', 'android:allowBackup="false"\n        android:usesCleartextTraffic="false"')
     print(f"Projeto Android ajustado: versão {nome} (código {codigo}), minSdk 29.")
