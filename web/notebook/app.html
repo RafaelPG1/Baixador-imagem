@@ -153,6 +153,9 @@
       <svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
       <input id="bib-filtro" type="search" placeholder="Buscar obra" aria-label="Buscar obra pelo nome" autocomplete="off" spellcheck="false">
     </label>
+    <select id="bib-estado" class="bib-estado" aria-label="Filtrar obras por estado" hidden>
+      <option value="">Todas as obras</option><option value="lendo">Lendo</option><option value="quero">Quero ler</option><option value="concluida">Concluídas</option><option value="sem">Sem estado</option>
+    </select>
     <div class="bib-menu">
       <button type="button" id="bib-tr-btn" class="btn" aria-expanded="false" aria-controls="bib-tr-painel"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 8 6 6"/><path d="m4 14 6-6 2-3"/><path d="M2 5h12"/><path d="M7 2h1"/><path d="m22 22-5-10-5 10"/><path d="M14 18h6"/></svg><span>Tradução</span><span id="bib-tr-resumo" class="suave"></span><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>
       <div id="bib-tr-painel" class="bib-popover bib-popover-largo" hidden>
@@ -171,6 +174,9 @@
       <button type="button" id="bib-mais-btn" class="btn bib-icone" aria-expanded="false" aria-controls="bib-mais-painel" aria-label="Mais ações da biblioteca" title="Mais ações"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="19" cy="12" r="1.2"/></svg></button>
       <div id="bib-mais-painel" class="bib-popover bib-popover-fim" hidden>
         <button type="button" id="abrir-saida" class="bib-item"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg><span>Abrir pasta da biblioteca</span></button>
+        <button type="button" id="abrir-lixeira" class="bib-item"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16"/><path d="M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12"/><path d="M9 7V4h6v3"/></svg><span>Lixeira</span></button>
+        <button type="button" id="abrir-busca" class="bib-item"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><span>Pesquisar nas traduções</span></button>
+        <button type="button" id="abrir-espaco" class="bib-item"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6"/><path d="M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></svg><span>Espaço em disco</span></button>
         <hr>
         <button type="button" id="excluir-tudo" class="bib-item perigo" title="Apaga TODAS as obras da biblioteca (pede confirmação)"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16"/><path d="M10 11v6M14 11v6"/><path d="M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12"/><path d="M9 7V4h6v3"/></svg><span>Excluir todas as obras</span></button>
       </div>
@@ -296,13 +302,15 @@
 
 <div id="ampliada" hidden></div>
 <div id="toast" role="status" hidden></div>
-<script src="/estatico/comum.js"></script>
-<script src="/estatico/diagrama.js"></script>
-<script src="/estatico/qrcode.js"></script>
-<script src="/estatico/baixar.js"></script>
-<script src="/estatico/biblioteca.js"></script>
-<script src="/estatico/traducoes.js"></script>
-<script src="/estatico/webia.js"></script>
-<script src="/estatico/celular.js"></script>
+<script defer src="/estatico/comum.js"></script>
+<script defer src="/estatico/diagrama.js"></script>
+<script defer src="/estatico/qrcode.js"></script>
+<script defer src="/estatico/baixar.js"></script>
+<script defer src="/estatico/biblioteca.js"></script>
+<script defer src="/estatico/traducoes.js"></script>
+<script defer src="/estatico/webia.js"></script>
+<script defer src="/estatico/armazenamento.js"></script>
+<script defer src="/estatico/busca.js"></script>
+<script defer src="/estatico/celular.js"></script>
 </body>
 </html>

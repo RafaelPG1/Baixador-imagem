@@ -8,11 +8,25 @@ function el(tag, classe, texto) { const e = document.createElement(tag); if (cla
 let _t = null;
 function aviso(t) { const x = $('toast'); x.textContent = t; x.hidden = false; clearTimeout(_t); _t = setTimeout(() => { x.hidden = true; }, 3000); }
 
+const H = Sincronia.criar(localStorage);                       // histórico local (posição, lido, estado da obra), sincronizado com o notebook
+const enviarSync = (corpo) => fetch('/api/app/sincronia', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(corpo)}).then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))));
+async function sincronizar(forcar) {
+  const antes = JSON.stringify(H.ler());
+  try { if (await H.sincronizar(enviarSync, forcar) && JSON.stringify(H.ler()) !== antes) desenhar(); } catch (_) { /* sem rede: o histórico local segue valendo e vai na próxima */ }
+}
 const urlCapa = (o) => `/api/capa?p=${encodeURIComponent(o.pasta)}&v=${o.capa_v}`;
 function urlDaObra(nome) { return nome ? '/?obra=' + encodeURIComponent(nome) : '/'; }
 function abrirObra(nome) { obraAberta = nome; filtroCap = ''; history.pushState(null, '', urlDaObra(nome)); desenhar(); window.scrollTo(0, 0); }
 window.addEventListener('popstate', () => { obraAberta = new URLSearchParams(location.search).get('obra'); filtroCap = ''; desenhar(); });
 const jaLido = (rel) => lido('lido:' + rel) === '1';
+function blocoContinuar() {
+  const u = H.ultima(); if (!u) return null;
+  const o = dados.obras.find((x) => x.capitulos.some((c) => c.rel === u.rel)), c = o && o.capitulos.find((x) => x.rel === u.rel);
+  if (!c) return null;
+  const b = el('div', 'bib-continuar'); b.append(el('span', '', `Continuar lendo: ${o.nome} — ${c.rotulo} (página ${u.p} de ${u.n})`));
+  const bt = el('button', 'btn principal pequeno', 'Continuar'); bt.type = 'button'; bt.addEventListener('click', () => abrir(o, c)); b.append(bt);
+  return b;
+}
 function abrir(o, c) { guardar('ultimo:' + o.nome, c.rel); location.href = urlCap(c.rel); }
 function continuar(o) {
   const rel = lido('ultimo:' + o.nome);
@@ -44,6 +58,7 @@ function cartaoObra(o) {
   const nome = b.querySelector('.capa-nome'); nome.remove();
   const tr = el('span', 'capa-trilho'); const barra = el('i'); barra.style.width = (n ? Math.round(feitas / n * 100) : 0) + '%'; tr.append(barra);
   meta.append(nome, el('span', 'capa-sub', `${n} capítulo${n === 1 ? '' : 's'}${feitas ? ' · ' + feitas + ' traduzido' + (feitas === 1 ? '' : 's') : ''}`), tr);
+  const est = H.estadoDaObra(o.nome); if (est) meta.insertBefore(el('span', 'capa-estado', Sincronia.ROTULOS[est]), meta.children[1]);
   b.append(meta);
   return b;
 }
@@ -64,7 +79,10 @@ function desenharObra(o) {
   const ler = el('button', 'btn principal'); ler.type = 'button'; ler.innerHTML = ic('ler');
   ler.append(el('span', '', ultimo && o.capitulos.some((c) => c.rel === ultimo) ? 'Continuar' : 'Ler'));
   ler.addEventListener('click', () => abrir(o, continuar(o)));
-  const acoes = el('div', 'obra-hero-acoes'); acoes.append(ler);
+  const selE = el('select', 'bib-estado'); selE.setAttribute('aria-label', 'Estado da obra');
+  Object.entries(Sincronia.ROTULOS).forEach(([v, t]) => { const op = el('option', '', v ? t : 'Estado: —'); op.value = v; selE.append(op); });
+  selE.value = H.estadoDaObra(o.nome); selE.addEventListener('change', () => { H.definirEstado(o.nome, selE.value); sincronizar(true); });
+  const acoes = el('div', 'obra-hero-acoes'); acoes.append(ler, selE);
   hero.append(capa, nome, res, prog, acoes);
   ficha.append(volta, hero);
 
@@ -116,13 +134,15 @@ function desenhar() {
   } else if (obra) {
     caixa.className = 'linhas'; caixa.replaceChildren(desenharObra(obra));
   } else {
-    const visiveis = dados.obras.filter((o) => !filtro || norm(o.nome).includes(norm(filtro)));
+    const sel = $('bib-estado').value, visiveis = dados.obras.filter((o) => (!filtro || norm(o.nome).includes(norm(filtro))) && (!sel || (sel === 'sem' ? !H.estadoDaObra(o.nome) : H.estadoDaObra(o.nome) === sel)));
     caixa.className = visiveis.length ? 'capas' : 'linhas';
-    caixa.replaceChildren(...(visiveis.length ? visiveis.map(cartaoObra) : [el('p', 'bib-vazio-filtro', `Nenhuma obra com “${filtro}”.`)]));
+    const continuar = !filtro && !sel && blocoContinuar();
+    caixa.replaceChildren(...(continuar ? [continuar] : []), ...(visiveis.length ? visiveis.map(cartaoObra) : [el('p', 'bib-vazio-filtro', filtro ? `Nenhuma obra com “${filtro}”.` : 'Nenhuma obra neste estado.')]));
   }
   devolverRolagens(rol);
   if (focoBusca) { const i = $('bib-busca-cap'); if (i) { i.focus({preventScroll: true}); i.setSelectionRange(i.value.length, i.value.length); } }
 }
+$('bib-estado').addEventListener('change', desenhar);
 $('bib-filtro').addEventListener('input', () => { filtro = $('bib-filtro').value.trim(); desenhar(); });
 
 function chip(texto, classe) { $('sync').textContent = texto; $('sync').className = 'chip ' + classe; }
@@ -152,7 +172,7 @@ async function vigiar() {
   }
   setTimeout(vigiar, 3000);
 }
-document.addEventListener('visibilitychange', () => { if (!document.hidden) vigiar_agora(); });
+document.addEventListener('visibilitychange', () => { if (!document.hidden) { vigiar_agora(); sincronizar(); } });
 function vigiar_agora() { fetch('/api/versao', {cache: 'no-store'}).then((r) => r.json()).then((j) => { if (j.versao !== dados.versao) carregar(); chip('Atualizado', 'ok'); }).catch(() => chip('Sem conexão com o notebook', 'erro')); }
-window.addEventListener('pageshow', () => { desenhar(); });
-carregar().catch(() => {}).finally(vigiar);
+window.addEventListener('pageshow', () => { desenhar(); sincronizar(); });
+carregar().catch(() => {}).finally(() => { vigiar(); sincronizar(true); });

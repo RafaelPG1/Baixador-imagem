@@ -29,7 +29,7 @@ from typing import Any, Dict, List, Optional
 from urllib.parse import parse_qs, quote, unquote, urlencode, urlsplit
 
 from baixador.biblioteca import acervo as biblioteca
-from baixador.biblioteca import exportar
+from baixador.biblioteca import exportar, historico
 from baixador.biblioteca.capitulo import dados_do_capitulo
 from baixador.servidor.base import CSS, ESTATICOS_LEITOR, JS, TIPOS_IMAGEM, ServidorSilencioso, ler_capa, ler_web, pagina_leitor
 
@@ -39,6 +39,7 @@ ESTATICOS = {
     "/estatico/base.css": ("compartilhado/base.css", CSS),
     "/estatico/diagrama.js": ("compartilhado/diagrama.js", JS),
     "/estatico/leitura.js": ("celular/leitura.js", JS),
+    "/estatico/sincronia.js": ("compartilhado/sincronia.js", JS),
     **ESTATICOS_LEITOR,
 }
 CSP = (
@@ -169,7 +170,24 @@ class _Manipulador(BaseHTTPRequestHandler):
         self.close_connection = True
         self._enviar(405, "application/json; charset=utf-8", b'{"erro":"Somente leitura."}', extras={"Allow": "GET, HEAD"})
 
-    do_POST = do_PUT = do_DELETE = do_PATCH = _recusar  # type: ignore[assignment]
+    do_PUT = do_DELETE = do_PATCH = _recusar  # type: ignore[assignment]
+
+    def do_POST(self) -> None:
+        """Única escrita aceita: /api/app/sincronia (histórico de leitura do aparelho). Exige a chave; não toca em nenhum arquivo da biblioteca."""
+        partes = urlsplit(self.path)
+        if partes.path != "/api/app/sincronia":
+            return self._recusar()
+        if self._liberado(parse_qs(partes.query)) is None:
+            return
+        try:
+            tamanho = int(self.headers.get("Content-Length", "0"))
+            if not 0 < tamanho <= 262144:
+                raise ValueError
+            dados = json.loads(self.rfile.read(tamanho))
+        except (ValueError, OSError):
+            self.close_connection = True
+            return self._json(400, {"erro": "Histórico inválido."})
+        self._json(200, historico.mesclar(dados))
 
     def do_OPTIONS(self) -> None:
         """Pré-verificação CORS do app Android (não carrega dados nem exige chave); de qualquer outra origem, 405."""
@@ -180,8 +198,8 @@ class _Manipulador(BaseHTTPRequestHandler):
             self.send_response(204)
             self.send_header("Access-Control-Allow-Origin", origem)
             self.send_header("Vary", "Origin")
-            self.send_header("Access-Control-Allow-Methods", "GET, HEAD")
-            self.send_header("Access-Control-Allow-Headers", "Authorization")
+            self.send_header("Access-Control-Allow-Methods", "GET, HEAD, POST")
+            self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type")
             self.send_header("Access-Control-Max-Age", "600")
             self.send_header("Content-Length", "0")
             self.end_headers()
@@ -271,7 +289,7 @@ class _Manipulador(BaseHTTPRequestHandler):
             rels, obra = consulta.get("rel", []), (consulta.get("obra") or [""])[0]
             if not (rels or obra):
                 return self._json(400, {"erro": "Escolha capítulos (rel=) ou uma obra (obra=)."})
-            pronto = exportar.zip_temporario(servidor.raiz, rels, obra)
+            pronto = exportar.zip_temporario(servidor.raiz, rels, obra, (consulta.get("compacto") or [""])[0] == "1")
             if pronto is None:
                 return self._json(404, {"erro": "Nenhum capítulo encontrado."})
             arquivo, tamanho, nome = pronto

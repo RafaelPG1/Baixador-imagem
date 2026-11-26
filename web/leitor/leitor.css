@@ -75,3 +75,16 @@ body.numeros .fim { padding: 40px 16px 24px; text-align: center; color: var(--su
 .navcap [aria-disabled=true] { opacity: .45; pointer-events: none; }
 .vazio { padding: 64px 16px; text-align: center; color: var(--suave); }
 @media (prefers-reduced-motion: reduce) { #progresso button::before { transition: none; } }
+
+/* ---- aviso de leitura retomada e painel de ajustes */
+#retomado { position: fixed; z-index: 30; left: 50%; bottom: max(16px, env(safe-area-inset-bottom)); transform: translateX(-50%); max-width: calc(100vw - 32px); padding: 10px 14px;
+  border-radius: 10px; color: #e7ebf1; background: rgba(33, 37, 44, .96); border: 1px solid rgba(255,255,255,.14); box-shadow: 0 6px 22px rgba(0,0,0,.4); font-size: .9rem; }
+#retomado button { margin-left: 8px; min-height: 36px; padding: 0 12px; border: 0; border-radius: 8px; background: var(--linha); color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
+#painel-ajustes { right: calc(max(10px, env(safe-area-inset-right)) + 66px); top: calc(max(10px, env(safe-area-inset-top)) + 62px); width: min(300px, calc(100vw - 96px)); padding: 12px; border-radius: 12px; font-size: .9rem; }
+#painel-ajustes[hidden] { display: none; }
+#painel-ajustes label { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+#painel-ajustes input[type=range] { width: 100%; }
+#painel-ajustes input[type=checkbox] { align-self: flex-start; width: 22px; height: 22px; }
+#painel-ajustes .cores { display: flex; gap: 8px; }
+#painel-ajustes .cores button { width: 44px; height: 44px; border: 2px solid rgba(255,255,255,.35); border-radius: 50%; }
+#painel-ajustes .rst { width: auto; height: 40px; padding: 0 14px; background: rgba(255,255,255,.1); }

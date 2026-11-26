@@ -60,6 +60,12 @@ public class SalvarZipPlugin extends Plugin {
             call.reject("Endereço inválido: só HTTPS.");
             return;
         }
+        final String chave = id.isEmpty() ? nome : id;
+        if (!ServicoDownload.CONTROLE.iniciar(chave)) {
+            call.reject("Este capítulo já está sendo baixado.");          // sem download duplicado
+            return;
+        }
+        ServicoDownload.iniciar(getContext(), "Baixando " + nome);          // serviço em primeiro plano: o download sobrevive ao app em 2º plano
         new Thread(
             new Runnable() {
                 @Override
@@ -103,6 +109,9 @@ public class SalvarZipPlugin extends Plugin {
                             }
                             int lidos;
                             while ((lidos = entrada.read(buffer)) != -1) {
+                                if (ServicoDownload.CONTROLE.cancelado(chave)) {
+                                    throw new java.io.IOException("cancelado");
+                                }
                                 saida.write(buffer, 0, lidos);
                                 recebido += lidos;
                                 long agora = System.currentTimeMillis();
@@ -113,8 +122,12 @@ public class SalvarZipPlugin extends Plugin {
                                     evento.put("recebido", recebido);
                                     evento.put("total", total);
                                     notifyListeners("progresso", evento);
+                                    ServicoDownload.atualizar(getContext(), "Baixando " + nome, recebido, total);
                                 }
                             }
+                        }
+                        if (total > 0 && recebido != total) {
+                            throw new java.io.IOException("Download incompleto (" + recebido + " de " + total + " bytes).");   // nunca aparece como concluído
                         }
                         ContentValues pronto = new ContentValues();
                         pronto.put(MediaStore.MediaColumns.IS_PENDING, 0);
@@ -133,15 +146,25 @@ public class SalvarZipPlugin extends Plugin {
                             }
                         }
                         String motivo = erro.getMessage() == null ? erro.getClass().getSimpleName() : erro.getMessage();
-                        call.reject("Falha ao baixar: " + motivo);
+                        call.reject("cancelado".equals(motivo) ? "cancelado" : "Falha ao baixar: " + motivo);
                     } finally {
                         if (conexao != null) {
                             conexao.disconnect();
+                        }
+                        if (ServicoDownload.CONTROLE.terminar(chave) == 0) {
+                            ServicoDownload.parar(getContext());
                         }
                     }
                 }
             }
         ).start();
+    }
+
+    /** Cancela o download em andamento desse id (o arquivo parcial é apagado pelo próprio download). */
+    @PluginMethod
+    public void cancelar(final PluginCall call) {
+        ServicoDownload.CONTROLE.cancelar(call.getString("id", ""));
+        call.resolve();
     }
 
     /**

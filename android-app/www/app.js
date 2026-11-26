@@ -173,7 +173,8 @@
   }
   var TRANSITORIOS = { TIMEOUT: 1, REDE: 1, RECUSADA: 1, BAD_GATEWAY: 1, FETCH: 1 };
   async function umaTentativa(c, caminho, o) {
-    var S = nativoRede(), cab = { Authorization: 'Bearer ' + c.chave };
+    var S = o.metodo === 'POST' ? null : nativoRede(), cab = { Authorization: 'Bearer ' + c.chave };   // o HTTP nativo só faz GET: o POST da sincronia vai por fetch
+    if (o.metodo === 'POST') cab['Content-Type'] = 'application/json';
     if (S) {
       try {
         var r = await S.requisitar({ url: c.base + caminho, headers: cab, limite: o.limite, binario: !!o.binario });
@@ -186,7 +187,7 @@
     var ctl = new AbortController(), estourou = false, fim = o.limite > 0 ? setTimeout(function () { estourou = true; ctl.abort(); }, o.limite) : null;
     if (o.signal) o.signal.addEventListener('abort', function () { ctl.abort(); });
     try {
-      var f = await fetch(c.base + caminho, { headers: cab, signal: ctl.signal, cache: 'no-store' });
+      var f = await fetch(c.base + caminho, { method: o.metodo || 'GET', body: o.metodo === 'POST' ? o.corpo : undefined, headers: cab, signal: ctl.signal, cache: 'no-store' });
       return { status: f.status, resposta: f, binario: !!o.binario };
     } catch (e) { throw falha(estourou ? 'TIMEOUT' : 'FETCH', c.base, e && e.message); }
     finally { if (fim) clearTimeout(fim); }
@@ -212,7 +213,7 @@
     for (var n = 0; n < tentativas; n++) {
       if (opcoes.signal && opcoes.signal.aborted) { var ab = new Error('Cancelado.'); ab.name = 'AbortError'; throw ab; }
       try {
-        x = await umaTentativa(c, caminho, { limite: limite, signal: opcoes.signal, binario: opcoes.binario });
+        x = await umaTentativa(c, caminho, { limite: limite, signal: opcoes.signal, binario: opcoes.binario, metodo: opcoes.metodo, corpo: opcoes.corpo });
         if (x.status === 502 || x.status === 503 || x.status === 504) throw falha('BAD_GATEWAY', c.base);
         erro = null; break;
       } catch (e) {
@@ -393,6 +394,19 @@
     acoes.append(de_novo, off, rec); tela.append(v, acoes);
   }
 
+  /* ---------------- histórico de leitura e estado das obras (sincronizados com o notebook; o mais novo vence) ---------------- */
+  var H = window.Sincronia.criar(localStorage);
+  function SUFIXO_COMPACTO() { return lembrar('compacto') === '1' ? '&compacto=1' : ''; }   // opcional: imagens menores (WebP ~1080 px); o padrão é o original
+  async function sincronizar(forcar) {                          // sem rede ou sem notebook: o histórico local segue valendo e vai na próxima
+    if (!cfg()) return;
+    try {
+      await H.sincronizar(async function (corpo) {
+        var r = await fetchAuth('/api/app/sincronia', { limite: 15000, tentativas: 1, metodo: 'POST', corpo: JSON.stringify(corpo) });
+        return r.json();
+      }, forcar);
+    } catch (_) {}
+  }
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) sincronizar(); });
   var atualizacaoVerificada = false;
   function avisoAtualizacao(eu, tela) {                         // uma conferência por abertura do app; só aparece se houver versão nova de verdade
     function pintar() {
@@ -409,18 +423,31 @@
     tela.replaceChildren(el('p', 'nota', 'Conectando ao notebook…'));
     var dados; try { dados = await carregarOnline(); } catch (e) { if (vivo(eu)) erroOnline(tela, e); return; }
     if (!vivo(eu)) return;
+    await sincronizar(true); if (!vivo(eu)) return;
     var locais = await todos('caps'); if (!vivo(eu)) return;
     tela.replaceChildren();
     avisoAtualizacao(eu, tela);
     if (!dados.obras.length) { tela.append(vazio('O notebook ainda não tem obras', 'Baixe capítulos no programa e volte aqui.')); return; }
     tela.append(el('h1', '', 'Obras no notebook'));
+    var u = H.ultima(), uObra = u && dados.obras.find(function (o) { return o.capitulos.some(function (c) { return c.rel === u.rel; }); });
+    var uCap = uObra && uObra.capitulos.find(function (c) { return c.rel === u.rel; });
+    if (uCap) {
+      var cont = el('a', 'btn principal grande', 'Continuar lendo: ' + uObra.nome + ' — ' + (uCap.rotulo || uCap.rel) + ' (página ' + u.p + ' de ' + u.n + ')'); cont.href = 'leitor.html?c=' + enc(uCap.rel); cont.style.display = 'block'; cont.style.marginTop = '12px';
+      tela.append(cont);
+    }
+    var fEst = el('select', 'filtro-estado'); fEst.setAttribute('aria-label', 'Filtrar obras por estado'); fEst.style.marginTop = '12px';
+    [['', 'Todas as obras'], ['lendo', 'Lendo'], ['quero', 'Quero ler'], ['concluida', 'Concluídas'], ['sem', 'Sem estado']].forEach(function (x) { var op = el('option', '', x[1]); op.value = x[0]; fEst.append(op); });
+    fEst.value = lembrar('filtro-estado') || '';
+    tela.append(fEst);
     var grade = el('div', 'capas'); grade.style.marginTop = '14px';
-    dados.obras.forEach(function (o) {
+    fEst.addEventListener('change', function () { guardar('filtro-estado', fEst.value); rotear(); });
+    dados.obras.filter(function (o) { var e = H.estadoDaObra(o.nome); return !fEst.value || (fEst.value === 'sem' ? !e : e === fEst.value); }).forEach(function (o) {
       var meus = locais.filter(function (c) { return c.obra === o.nome; }).length;
       var feitos = o.capitulos.filter(function (c) { return TR.estado(c) === 'concluido'; }).length;
       var a = el('a', 'capa'); a.href = '#/online/' + enc(o.nome);
       var img = capaObra(o.nome);
-      a.append(img, el('span', 'capa-nome', o.nome), el('span', 'capa-sub', o.capitulos.length + ' cap. · ' + feitos + ' traduzido' + (feitos === 1 ? '' : 's') + (meus ? ' · ' + meus + ' no celular' : '')));
+      var est = H.estadoDaObra(o.nome);
+      a.append(img, el('span', 'capa-nome', o.nome), el('span', 'capa-sub', (est ? window.Sincronia.ROTULOS[est] + ' · ' : '') + o.capitulos.length + ' cap. · ' + feitos + ' traduzido' + (feitos === 1 ? '' : 's') + (meus ? ' · ' + meus + ' no celular' : '')));
       grade.append(a);
       if (o.pasta && o.capa) {                                // capa, carregada depois (não trava a lista)
         fetchAuth('/api/capa?p=' + enc(o.pasta) + '&v=' + (o.capa_v || 0), { binario: true, tentativas: 1 }).then(function (r) { return r.blob(); }).then(function (b) {
@@ -447,7 +474,10 @@
     tela.replaceChildren();
 
     var cab = el('div', 'obra-cab'), info = el('div'), resumo = el('p', 'nota');
-    var capa = capaObra(nome); info.append(el('h1', '', nome), resumo); cab.append(capa, info);
+    var selE = el('select', 'filtro-estado'); selE.setAttribute('aria-label', 'Estado da obra');
+    ['', 'quero', 'lendo', 'concluida'].forEach(function (v) { var op = el('option', '', v ? window.Sincronia.ROTULOS[v] : 'Estado: —'); op.value = v; selE.append(op); });
+    selE.value = H.estadoDaObra(nome); selE.addEventListener('change', function () { H.definirEstado(nome, selE.value); sincronizar(true); });
+    var capa = capaObra(nome); info.append(el('h1', '', nome), resumo, selE); cab.append(capa, info);
     tela.append(voltarPara('#/', 'Obras'), cab);
     if (obra.pasta && obra.capa) fetchAuth('/api/capa?p=' + enc(obra.pasta) + '&v=' + (obra.capa_v || 0), { binario: true, tentativas: 1 }).then(function (r) { return r.blob(); }).then(function (b) {
       if (!vivo(eu)) return; var i = el('img'); i.alt = ''; i.src = url(b); capa.replaceChildren(i);
@@ -542,7 +572,7 @@
     }
     function avancar(rec, tot) { prog.max = tot || 1; prog.value = tot ? rec : 0; }
     async function baixarOffline(c, sinal, prg) {
-      var blob = await baixarBlob('/api/app/exportar?rel=' + enc(c.rel), prg, sinal);
+      var blob = await baixarBlob('/api/app/exportar?rel=' + enc(c.rel) + SUFIXO_COMPACTO(), prg, sinal);
       txt.textContent += ' · guardando…'; await importarUm(blob);
       await gravarMarca(c.rel, TR.estado(c) === 'concluido'); locais[c.rel] = await obter('caps', c.rel);
     }
@@ -587,11 +617,12 @@
     if (SZ) {
       garantirOuvinte(SZ);
       progressoNativo = prg;
-      try { await SZ.salvar({ url: conf.base + '/api/app/exportar?rel=' + enc(c.rel), headers: { Authorization: 'Bearer ' + conf.chave }, pasta: obra.nome, nome: nome, id: c.rel }); }
+      if (sinal) sinal.addEventListener('abort', function () { try { SZ.cancelar({ id: c.rel }); } catch (_) {} });   // cancelar na tela também cancela o download nativo
+      try { await SZ.salvar({ url: conf.base + '/api/app/exportar?rel=' + enc(c.rel) + SUFIXO_COMPACTO(), headers: { Authorization: 'Bearer ' + conf.chave }, pasta: obra.nome, nome: nome, id: c.rel }); }
       finally { progressoNativo = null; }
       return;
     }
-    var blob = await baixarBlob('/api/app/exportar?rel=' + enc(c.rel), prg, sinal);     // fora do app (teste no navegador): download comum
+    var blob = await baixarBlob('/api/app/exportar?rel=' + enc(c.rel) + SUFIXO_COMPACTO(), prg, sinal);     // fora do app (teste no navegador): download comum
     var a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = nome; document.body.append(a); a.click(); a.remove();
     setTimeout(function () { URL.revokeObjectURL(a.href); }, 10000);
   }
@@ -734,6 +765,10 @@
     var uso = el('p', 'nota', 'Calculando…'); bArm.append(uso);
     try { var e = navigator.storage && navigator.storage.estimate ? await navigator.storage.estimate() : null; uso.textContent = e ? 'Em uso pelo app: ' + mb(e.usage) + '.' : 'O sistema não informa o uso.'; } catch (_) { uso.textContent = 'O sistema não informa o uso.'; }
 
+    var bComp = el('section', 'bloco'); bComp.append(el('h2', '', 'Qualidade dos downloads'));
+    var cb = el('input'); cb.type = 'checkbox'; cb.checked = lembrar('compacto') === '1'; cb.addEventListener('change', function () { guardar('compacto', cb.checked ? '1' : '0'); });
+    var rot = el('label', 'linha'); rot.append(cb, document.createTextNode(' Imagens compactadas (menores, qualidade um pouco menor)'));
+    bComp.append(rot, el('p', 'nota', 'Vale para os próximos downloads. As imagens do notebook nunca são alteradas; desligado, vem o original.'));
     var bDados = el('section', 'bloco'); bDados.append(el('h2', '', 'Obras baixadas'));
     var l2 = el('div', 'linha');
     var imp = el('button', 'btn', 'Importar ZIP do celular'); imp.type = 'button'; imp.title = 'Para ZIPs salvos em Download/Baixador (ou enviados por outro meio)';
@@ -751,7 +786,7 @@
     var SZi = plugin('SalvarZip');
     if (SZi && SZi.infoApp) { var linhaApp = el('p', 'nota', ''); bSobre.append(linhaApp); SZi.infoApp().then(function (i) { linhaApp.textContent = 'Pacote ' + i.pacote + ' · versionCode ' + i.versionCode + ' · chave de assinatura ' + (i.assinatura || 'desconhecida') + '.'; }, function () {}); }
     bSobre.append(el('p', 'nota', 'Fora de casa: deixe o Tailscale ligado no celular e o notebook ligado, conectado e sem suspender.'));
-    if (vivo(eu)) tela.append(bConexao, blocoAtualizacao(), bArm, bDados, bSobre);
+    if (vivo(eu)) tela.append(bConexao, blocoAtualizacao(), bArm, bComp, bDados, bSobre);
   }
 
   /* ---------------- rotas ---------------- */

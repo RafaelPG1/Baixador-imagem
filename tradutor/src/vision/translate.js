@@ -152,6 +152,14 @@ export function glossaryMisses(source, translation, glossary) {
   return Object.entries(glossary).filter(([term, pt]) => new RegExp(`\\b${term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(source) && !translation.toLowerCase().includes(pt.toLowerCase())).map(([t]) => t);
 }
 
+// Edições feitas à mão (edicoes.json: { "id da fala": "texto" }) valem sobre qualquer tradução, inclusive ao refazer o capítulo.
+export function applyEdits(units, edits) {
+  return units.map((u) => {
+    const t = typeof edits?.[u.id] === 'string' ? edits[u.id].trim() : '';
+    return t ? { ...u, translation: t, status: 'ok', error: undefined, glossary: [], editada: true } : u;
+  });
+}
+
 async function readJson(file, fallback) {
   try {
     return JSON.parse(await readFile(file, 'utf8'));
@@ -167,6 +175,7 @@ export async function translateChapter(ocrFile, outDir, { engine, translateFn = 
   const base = path.dirname(ocrFile);
   const fixes = await readJson(path.join(base, 'correcoes.json'), {});
   const glossary = await readJson(path.join(base, 'glossario.json'), {});
+  const edits = await readJson(path.join(base, 'edicoes.json'), {});
   engine ??= getDefaultEngine();
   const provider = getEngines()[engine]?.name ?? engine;
   const units = collectUnits(ocr, fixes);
@@ -191,14 +200,14 @@ export async function translateChapter(ocrFile, outDir, { engine, translateFn = 
     for (const r of entry.results) done.set(r.id, { ...r, mode: entry.mode, batch: i + 1 });
   }
 
-  const out = units.map((u) => {
+  const out = applyEdits(units.map((u) => {
     const r = done.get(u.id);
     const base = { id: u.id, page: u.page, file: u.file, balloonId: u.balloonId, textIds: u.textIds, bbox: u.bbox, source: u.source };
     if (!r) return { ...base, translation: u.source, status: 'copiado', mode: null, batch: null }; // só números/pontuação
     if (r.error) { stats.errors++; return { ...base, translation: null, status: 'erro', error: r.error, mode: r.mode, batch: r.batch }; }
     const misses = glossaryMisses(u.source, r.translation, glossary);
     return { ...base, translation: r.translation, status: misses.length || r.mode === 'individual' ? 'revisar' : 'ok', glossary: misses, mode: r.mode, batch: r.batch };
-  });
+  }), edits);
   const doc = { generatedAt: new Date().toISOString(), engine, provider, source: path.relative(outDir, ocrFile).split(path.sep).join('/'), stats, units: out };
   await writeFile(path.join(outDir, 'traducao.json'), JSON.stringify(doc, null, 2));
   log(`${out.length} falas em ${batches.length} lotes (${stats.cached} do cache, ${stats.translated} traduzidos, ${stats.individual} caíram para tradução individual, ${stats.errors} com erro) → ${path.join(outDir, 'traducao.json')}`);

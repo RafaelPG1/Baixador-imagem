@@ -1,5 +1,5 @@
 /* Aba "Biblioteca": obras como linhas, capítulos como estações; ler, traduzir e organizar (só no notebook). */
-let bib = {obras: [], versao: ''}, obraAberta = new URLSearchParams(location.search).get('obra'), escolhido = null, tradLog = 0, tradRodando = false, prontosVistos = 0;
+let hist = {posicoes: {}, estados: {}, ultima: null}, tamanhos = {}, bib = {obras: [], versao: ''}, obraAberta = new URLSearchParams(location.search).get('obra'), escolhido = null, tradLog = 0, tradRodando = false, prontosVistos = 0;
 const urlLeitor = (rel) => `/leitor?c=${encodeURIComponent(rel)}&t=${encodeURIComponent(T)}`;
 const corDe = (o) => String(o.cor);
 const urlCapa = (o) => rota('/api/capa', `&p=${encodeURIComponent(o.pasta)}&v=${o.capa_v}`);
@@ -14,12 +14,25 @@ function achar(rel) {
   for (const o of bib.obras) for (const c of o.capitulos) if (c.rel === rel) return {obra: o, cap: c};
   return null;
 }
+function tamanhoLegivel(b) { return b >= 1073741824 ? (b / 1073741824).toFixed(1) + ' GB' : b >= 1048576 ? Math.round(b / 1048576) + ' MB' : Math.max(1, Math.round(b / 1024)) + ' KB'; }
 async function acao(caminho, corpo, ok) {
   try { const r = await chamar(caminho, corpo); if (ok) aviso(ok(r)); return r; }
   catch (e) { aviso(e.message); return null; }
 }
 
 function lerCapitulo(c) { window.open(urlLeitor(c.rel), '_blank', 'noopener'); }
+const ESTADO_OBRA = {'': 'Sem estado', quero: 'Quero ler', lendo: 'Lendo', concluida: 'Concluída'};      // da OBRA; "lido" é do capítulo e é outra coisa
+const estadoDaObra = (o) => (hist.estados[o.nome] || {}).e || '';
+async function definirEstado(o, e) { try { await chamar('/api/historico/estado', {obra: o.nome, estado: e, t: Date.now()}); hist.estados[o.nome] = {e, t: Date.now()}; desenhar(); } catch (x) { aviso(x.message); } }
+function carregarHistorico() { return ler('/api/historico').then((h) => { if (JSON.stringify([h.estados, h.ultima]) !== JSON.stringify([hist.estados, hist.ultima])) { hist = h; desenhar(); } else hist = h; }).catch(() => {}); }
+function blocoContinuar() {
+  const u = hist.ultima; if (!u) return null;
+  const o = bib.obras.find((x) => x.capitulos.some((c) => c.rel === u.rel)); const c = o && o.capitulos.find((x) => x.rel === u.rel);
+  if (!c) return null;
+  const b = el('div', 'bib-continuar'); b.append(el('span', '', `Continuar lendo: ${o.nome} — ${c.rotulo || nomeCap(c)} (página ${u.p} de ${u.n})`));
+  b.append(botao('Continuar', 'principal pequeno', () => lerCapitulo(c)));
+  return b;
+}
 function lerObra(o) {
   // 1º) o capítulo que você selecionou nesta obra; 2º) o primeiro liberado (traduzido) ainda não lido; 3º) o último liberado; 4º) o último baixado.
   const sel = escolhido && o.capitulos.find((c) => c.rel === escolhido);
@@ -114,8 +127,8 @@ function nomeCap(c) { return c.numero != null && c.numero !== '' ? 'Cap. ' + c.n
 async function excluirCapitulos(o, caps) {
   const lista = caps.map(nomeCap), mostra = lista.length > 40 ? lista.slice(0, 40).join(', ') + ` … e mais ${lista.length - 40}` : lista.join(', ');
   const trad = caps.filter((c) => c.traduzido).length;
-  if (!confirm(`Excluir ${caps.length === 1 ? 'este capítulo' : caps.length + ' capítulos'} de “${o.nome}”?\n\n${mostra}\n\nAs imagens${trad ? ' e as traduções' : ''} ${caps.length === 1 ? 'dele' : 'deles'} serão apagadas do disco. Os outros capítulos e a obra ficam. Isto não pode ser desfeito.`)) return;
-  const r = await acao('/api/biblioteca/capitulos/excluir', {obra: o.nome, rels: caps.map((c) => c.rel)}, (x) => `${x.apagados.length} capítulo(s) excluído(s).` + (x.erros.length ? ` Falhou: ${x.erros.join('; ')}` : ''));
+  if (!confirm(`Excluir ${caps.length === 1 ? 'este capítulo' : caps.length + ' capítulos'} de “${o.nome}”?\n\n${mostra}\n\nEles vão para a Lixeira (Mais ações → Lixeira), com imagens${trad ? ' e traduções' : ''}, e podem ser restaurados por 14 dias. Os outros capítulos e a obra ficam.`)) return;
+  const r = await acao('/api/biblioteca/capitulos/excluir', {obra: o.nome, rels: caps.map((c) => c.rel)}, (x) => `${x.apagados.length} capítulo(s) movido(s) para a Lixeira.` + (x.erros.length ? ` Falhou: ${x.erros.join('; ')}` : ''));
   if (r) { modoSel = null; escolhido = null; ultimoPainel = ''; carregar(); }
 }
 
@@ -294,8 +307,10 @@ function desenharObra(o) {
   const prog = el('div', 'bib-progresso'); const tr = el('div', 'capa-trilho'); const barra = el('i'); barra.style.width = (o.capitulos.length ? Math.round(feitas / o.capitulos.length * 100) : 0) + '%'; tr.append(barra);
   prog.append(tr);
   const acoes = el('div', 'obra-hero-acoes');
+  const selE = el('select', 'bib-estado'); selE.setAttribute('aria-label', 'Estado da obra'); Object.entries(ESTADO_OBRA).forEach(([v, t]) => { const op = el('option', '', v ? t : 'Estado: —'); op.value = v; selE.append(op); }); selE.value = estadoDaObra(o); selE.addEventListener('change', () => definirEstado(o, selE.value));
   acoes.append(comIcone('ler', 'Ler', 'principal'));
   acoes.firstChild.addEventListener('click', () => lerObra(o));
+  acoes.append(selE);
   if (pend) { const b = comIcone('traduzir', `Traduzir ${pend} pendente${pend === 1 ? '' : 's'}`, ''); b.addEventListener('click', () => traduzir({lote: 'pendentes', obra: o.nome})); acoes.append(b); }
   if (o.pasta) {
     const atual = comIcone('atualizar', 'Atualizar', '');
@@ -340,8 +355,8 @@ function desenharObra(o) {
   if (o.pasta) {
     pn.append(el('hr'));
     pn.append(itemMenu('lixo', 'Excluir obra', 'perigo', async () => {
-      if (!confirm(`Excluir a obra “${o.nome}” do disco?\n\nOs ${o.capitulos.length} capítulo(s), as traduções e a capa serão apagados. Outras obras não são afetadas. Isto não pode ser desfeito.`)) return;
-      const r = await acao('/api/biblioteca/obra/excluir', {obra: o.nome}, (x) => `Obra excluída (${x.capitulos} capítulo(s)).`);
+      if (!confirm(`Excluir a obra “${o.nome}”?\n\nOs ${o.capitulos.length} capítulo(s), as traduções e a capa vão para a Lixeira e podem ser restaurados por 14 dias. Outras obras não são afetadas.`)) return;
+      const r = await acao('/api/biblioteca/obra/excluir', {obra: o.nome}, (x) => `Obra movida para a Lixeira (${x.capitulos} capítulo(s)).`);
       if (r) { obraAberta = null; escolhido = null; history.replaceState(null, '', urlDaObra(null)); carregar(); }
     }));
   }
@@ -359,7 +374,8 @@ function cartaoObra(o) {
   const meta = el('span', 'capa-meta');
   const nome = b.querySelector('.capa-nome'); nome.remove(); b.title = o.nome;
   const tr = el('span', 'capa-trilho'); const barra = el('i'); barra.style.width = (n ? Math.round(feitas / n * 100) : 0) + '%'; tr.append(barra);
-  meta.append(nome, el('span', 'capa-sub', `${n} capítulo${n === 1 ? '' : 's'}${feitas ? ' · ' + feitas + ' traduzido' + (feitas === 1 ? '' : 's') : ''}`), tr);
+  const est = estadoDaObra(o); if (est) b.title = `${o.nome} — ${ESTADO_OBRA[est]}`;
+  meta.append(nome, ...(est ? [el('span', 'capa-estado', ESTADO_OBRA[est])] : []), el('span', 'capa-sub', `${n} capítulo${n === 1 ? '' : 's'}${feitas ? ' · ' + feitas + ' traduzido' + (feitas === 1 ? '' : 's') : ''}${tamanhos[o.nome] ? ' · ' + tamanhoLegivel(tamanhos[o.nome]) : ''}`), tr);
   b.append(meta);
   return b;
 }
@@ -376,6 +392,7 @@ function desenhar() {
   const focoId = document.activeElement && /^bib-(busca-cap|sel-)/.test(document.activeElement.id) ? document.activeElement.id : '';
   $('bib-conta').textContent = bib.obras.length ? (obra ? '' : `${bib.obras.length} obra${bib.obras.length === 1 ? '' : 's'}`) : '';
   $('bib-filtro').closest('.bib-busca').hidden = !!obra || !bib.obras.length;
+  $('bib-estado').hidden = !!obra || !bib.obras.length;
   if (!bib.obras.length) {
     const v = el('div', 'vazio'); v.append(el('strong', '', 'A biblioteca está vazia'), el('span', '', 'Baixe um capítulo na aba “Baixar imagens”: a obra aparece aqui com a capa e o nome.'));
     v.append(botao('Ir para Baixar imagens', '', () => irPara('baixar')));
@@ -383,15 +400,17 @@ function desenhar() {
   } else if (obra) {
     caixa.className = 'linhas'; caixa.replaceChildren(desenharObra(obra));
   } else {
-    const visiveis = bib.obras.filter((o) => !filtro || norm(o.nome).includes(norm(filtro)));
+    const sel = $('bib-estado').value, visiveis = bib.obras.filter((o) => (!filtro || norm(o.nome).includes(norm(filtro))) && (!sel || (sel === 'sem' ? !estadoDaObra(o) : estadoDaObra(o) === sel)));
     caixa.className = visiveis.length ? 'capas' : 'linhas';
-    caixa.replaceChildren(...(visiveis.length ? visiveis.map(cartaoObra) : [el('p', 'bib-vazio-filtro', `Nenhuma obra com “${filtro}”.`)]));
+    const continuar = !filtro && !sel && blocoContinuar();
+    caixa.replaceChildren(...(continuar ? [continuar] : []), ...(visiveis.length ? visiveis.map(cartaoObra) : [el('p', 'bib-vazio-filtro', filtro ? `Nenhuma obra com “${filtro}”.` : 'Nenhuma obra neste estado.')]));
   }
   devolverRolagens(rol);
   if (focoId) { const i = $(focoId); if (i) { i.focus({preventScroll: true}); i.setSelectionRange(i.value.length, i.value.length); } }
   desenharDetalhe();
   if (focoRel) { const b = document.querySelector(`.cap-item[data-rel="${CSS.escape(focoRel)}"]`); if (b) b.focus({preventScroll: true}); }
 }
+$('bib-estado').addEventListener('change', desenhar);
 $('bib-filtro').addEventListener('input', () => { filtro = $('bib-filtro').value.trim(); desenhar(); });
 
 async function carregar() {
@@ -399,7 +418,8 @@ async function carregar() {
     bib = await ler('/api/biblioteca');
     if (obraAberta && !bib.obras.some((o) => o.nome === obraAberta)) obraAberta = null;
     if (escolhido && !achar(escolhido)) escolhido = null;
-    desenhar(); carregarObras();
+    desenhar(); carregarObras(); carregarHistorico();
+    ler('/api/armazenamento/tamanhos').then((t) => { if (JSON.stringify(t.obras) !== JSON.stringify(tamanhos)) { tamanhos = t.obras; desenhar(); } }).catch(() => {});   // o servidor guarda em cache até a biblioteca mudar
   } catch (_) {}
 }
 
@@ -486,9 +506,9 @@ $('trad-cancelar').addEventListener('click', () => acao('/api/traducao/cancelar'
 $('excluir-tudo').addEventListener('click', async () => {
   const n = bib.obras.length;
   if (!n) { aviso('A biblioteca já está vazia.'); return; }
-  if (!confirm(`ATENÇÃO: isto apaga TODA a biblioteca.\n\nAs ${n} obra(s), todos os capítulos, traduções e capas serão excluídos do disco. Isto não pode ser desfeito.\n\nContinuar?`)) return;
+  if (!confirm(`ATENÇÃO: isto apaga TODA a biblioteca.\n\nAs ${n} obra(s), todos os capítulos, traduções e capas vão para a Lixeira e podem ser restaurados por 14 dias.\n\nContinuar?`)) return;
   if ((prompt('Para confirmar, digite APAGAR TUDO (em maiúsculas):') || '').trim() !== 'APAGAR TUDO') { aviso('Nada foi apagado.'); return; }
-  const r = await acao('/api/biblioteca/excluir-tudo', {confirmacao: 'APAGAR TUDO'}, (x) => `Biblioteca apagada: ${x.obras} obra(s), ${x.capitulos} capítulo(s).`);
+  const r = await acao('/api/biblioteca/excluir-tudo', {confirmacao: 'APAGAR TUDO'}, (x) => `${x.obras} obra(s) e ${x.capitulos} capítulo(s) movidos para a Lixeira.`);
   if (r) { obraAberta = null; escolhido = null; history.replaceState(null, '', urlDaObra(null)); carregar(); }
 });
 $('abrir-saida').addEventListener('click', () => acao('/api/biblioteca/abrir-pasta', {}));
@@ -508,5 +528,6 @@ async function vigiar() {
   setTimeout(vigiar, 3000);
 }
 document.addEventListener('pagina', (ev) => { if (ev.detail === 'biblioteca') carregar(); });
+document.addEventListener('visibilitychange', () => { if (!document.hidden && !$('pg-biblioteca').hidden) carregarHistorico(); });
 carregar(); vigiar();
 irPara(location.hash.slice(1));

@@ -10,6 +10,7 @@ por esse par, nunca pela ordem. Uma tradução só vale se o texto original da f
 
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import os
@@ -21,9 +22,11 @@ import zipfile
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
-from baixador.biblioteca import acervo
+from baixador.biblioteca import acervo, capitulo
 from baixador.biblioteca import organizacao as org
 from baixador.biblioteca.capitulo import _subpastas
+from baixador.nucleo.erros import ErroBaixador
+from baixador.traducao import edicoes
 
 LIMITE_PADRAO = 12000                    # caracteres de texto por arquivo quando a exportação é dividida
 LIMITE_MINIMO, LIMITE_MAXIMO = 2000, 100000
@@ -62,9 +65,37 @@ def _json(arquivo: Path) -> Any:
         return None
 
 
+_CACHE: Dict[tuple, Any] = {}
+
+
+def _lembrar(chave: tuple, assinaturas: tuple, calcular: Any) -> Any:
+    """Resultado guardado enquanto os arquivos (data+tamanho) não mudam: a aba consulta isto a cada poucos segundos, para centenas de capítulos."""
+    guardado = _CACHE.get(chave)
+    if guardado and guardado[0] == assinaturas:
+        return guardado[1]
+    valor = calcular()
+    if len(_CACHE) > 4000:
+        _CACHE.clear()
+    _CACHE[chave] = (assinaturas, valor)
+    return valor
+
+
+def _assin(arquivo: Path) -> Any:
+    try:
+        st = arquivo.stat()
+        return (st.st_mtime_ns, st.st_size)
+    except OSError:
+        return None
+
+
 def ler_textos(pasta: Path) -> Optional[Dict[str, Any]]:
-    """`textos.json` do capítulo, só se estiver no formato esperado (o arquivo é dado, não é confiável)."""
-    d = _json(_dir_web(pasta) / "textos.json")
+    """`textos.json` do capítulo, só se estiver no formato esperado (o arquivo é dado, não é confiável). O resultado é compartilhado: só leia."""
+    arquivo = _dir_web(pasta) / "textos.json"
+    return _lembrar(("t", str(arquivo)), (_assin(arquivo),), lambda: _ler_textos(arquivo))
+
+
+def _ler_textos(arquivo: Path) -> Optional[Dict[str, Any]]:
+    d = _json(arquivo)
     if not isinstance(d, dict) or not isinstance(d.get("codigo"), str) or not _CODIGO.match(d["codigo"]) or not isinstance(d.get("unidades"), list):
         return None
     unidades = [u for u in d["unidades"] if isinstance(u, dict) and all(isinstance(u.get(k), str) for k in ("id", "fonte", "hash")) and _LINHA.match(f"[{d['codigo']}:{u['id']}]")]
@@ -74,8 +105,13 @@ def ler_textos(pasta: Path) -> Optional[Dict[str, Any]]:
 
 
 def ler_importadas(pasta: Path, textos: Dict[str, Any]) -> Dict[str, Dict[str, str]]:
-    """Traduções já importadas que ainda valem (mesmo código e mesmo texto original)."""
-    d = _json(_dir_web(pasta) / "importadas.json")
+    """Traduções já importadas que ainda valem (mesmo código e mesmo texto original). Devolve uma cópia: pode ser alterada."""
+    arquivo = _dir_web(pasta) / "importadas.json"
+    return dict(_lembrar(("i", str(arquivo), textos["codigo"], len(textos["unidades"])), (_assin(arquivo), _assin(_dir_web(pasta) / "textos.json")), lambda: _ler_importadas(arquivo, textos)))
+
+
+def _ler_importadas(arquivo: Path, textos: Dict[str, Any]) -> Dict[str, Dict[str, str]]:
+    d = _json(arquivo)
     if not isinstance(d, dict) or d.get("codigo") != textos["codigo"] or not isinstance(d.get("traducoes"), dict):
         return {}
     hashes = {u["id"]: u["hash"] for u in textos["unidades"]}
@@ -165,15 +201,20 @@ def _nome_seguro(texto: str) -> str:
     return re.sub(r"[^A-Za-z0-9]+", "-", s).strip("-").lower()[:40] or "obra"
 
 
-def exportar(raiz: Path, obra: str, rels: Iterable[str], introducao: bool = True, dividir: bool = False, limite: int = LIMITE_PADRAO) -> List[Dict[str, Any]]:
-    """TXT(s) com as falas dos capítulos pedidos (só os que têm textos preparados). Devolve [{nome, conteudo, textos, capitulos, caracteres}]."""
+def exportar(raiz: Path, obra: str, rels: Iterable[str], introducao: bool = True, dividir: bool = False, limite: int = LIMITE_PADRAO, somente_pendentes: bool = False) -> List[Dict[str, Any]]:
+    """TXT(s) com as falas dos capítulos pedidos (só os que têm textos preparados). Devolve [{nome, conteudo, textos, capitulos, caracteres}].
+
+    `somente_pendentes`: deixa de fora as falas que já têm tradução importada válida. O glossário da obra (se houver) entra na introdução."""
     pedidos = set(rels)
     chave = org._chave(obra)
     caps = sorted((c for c in _capitulos_da_biblioteca(raiz) if c["rel"] in pedidos and org._chave(c["obra"]) == chave), key=_ordem)
     if not caps:
         raise ValueError("Nenhum dos capítulos escolhidos tem textos preparados. Use “Preparar textos” antes de exportar.")
-    linhas = [(f"[{c['textos']['codigo']}:{u['id']}] {u['fonte']}", c["rel"]) for c in caps for u in c["textos"]["unidades"]]
+    feitas = {c["rel"]: ler_importadas(c["pasta"], c["textos"]) for c in caps} if somente_pendentes else {}
+    linhas = [(f"[{c['textos']['codigo']}:{u['id']}] {u['fonte']}", c["rel"]) for c in caps for u in c["textos"]["unidades"] if u["id"] not in feitas.get(c["rel"], {})]
     if not linhas:
+        if somente_pendentes:
+            raise ValueError("Não há falas pendentes: todas já têm tradução importada.")
         raise ValueError("Os capítulos escolhidos não têm nenhuma fala com texto para traduzir.")
     limite = max(LIMITE_MINIMO, min(LIMITE_MAXIMO, int(limite or LIMITE_PADRAO)))
     partes: List[List[tuple]] = [[]]
@@ -186,11 +227,15 @@ def exportar(raiz: Path, obra: str, rels: Iterable[str], introducao: bool = True
                 partes.append([]); usado = 0
             partes[-1].append(item); usado += len(item[0]) + 1
     base, saida = _nome_seguro(obra), []
+    try:
+        gloss = edicoes.bloco_glossario(edicoes.ler_glossario(raiz, caps[0]["rel"].split("/")[0]))
+    except ErroBaixador:
+        gloss = ""
     for i, parte in enumerate(partes, 1):
         corpo = "\n".join(l for l, _ in parte) + "\n"
         cabeca = ""
         if introducao:
-            cabeca = INTRODUCAO + ("\n" if len(partes) == 1 else f"\n(Esta é a parte {i} de {len(partes)}; traduza só as linhas desta parte.)\n") + "\n"
+            cabeca = INTRODUCAO.replace("\n\nTextos a traduzir", "\n\n" + gloss + "Textos a traduzir") + ("\n" if len(partes) == 1 else f"\n(Esta é a parte {i} de {len(partes)}; traduza só as linhas desta parte.)\n") + "\n"
         nome = f"{base}.txt" if len(partes) == 1 else f"{base}-parte-{i:02d}-de-{len(partes):02d}.txt"
         saida.append({"nome": nome, "conteudo": cabeca + corpo, "textos": len(parte), "capitulos": len({r for _, r in parte}), "caracteres": len(cabeca + corpo)})
     return saida
@@ -359,3 +404,83 @@ def relatorio(analise: Dict[str, Any]) -> Dict[str, Any]:
             for c in analise["capitulos"].values()]
     return {"capitulos": caps, "linhas": analise["linhas"], "linhas_fora_da_estrutura": analise["linhas_fora_da_estrutura"], "total_fora": analise["total_fora"],
             "codigos_desconhecidos": analise["codigos_desconhecidos"], "codigos_ambiguos": analise["codigos_ambiguos"], "introducao_ignorada": analise["introducao_ignorada"]}
+
+
+# --------------------------------------------------------------------------- revisão por IA (só falas "revisar"/"erro")
+
+INTRODUCAO_REVISAO = """Você é revisor profissional de tradução de mangá, manhwa e quadrinhos (inglês → português brasileiro, PT-BR).
+
+Cada linha tem o formato:
+[IDENTIFICADOR] texto original ::: tradução atual
+
+Regras:
+1. Corrija ou refaça a tradução atual (que pode estar vazia ou errada), mantendo o sentido do original e a linguagem natural de quadrinhos.
+2. Mantenha os identificadores entre colchetes exatamente como estão.
+3. Devolva uma linha para cada linha de entrada, no formato [IDENTIFICADOR] tradução corrigida, sem o original e sem ":::".
+4. Retorne somente o resultado: sem introdução, comentários, blocos de código ou markdown.
+
+{glossario}Falas para revisar (começam na próxima linha):"""
+_REVISAR = ("revisar", "erro")
+
+
+def _codigo_rev(rel: str) -> str:
+    return hashlib.sha1(rel.encode("utf-8")).hexdigest()[:8]
+
+
+def _para_revisar(raiz: Path, obra: str) -> List[Dict[str, Any]]:
+    chave, achados = org._chave(obra), []
+    for c in sorted(_todos(raiz), key=_ordem):
+        if org._chave(c["obra"]) != chave or not c.get("traduzido") or not (c.get("revisar") or c.get("incompleta")):
+            continue
+        d = capitulo._ler_traducao(c["pasta"]) or {}
+        falas = [u for p in d.get("pages", []) for u in p.get("units", []) if u.get("status") in _REVISAR and u.get("source")]
+        if falas:
+            achados.append({"rel": c["rel"], "pasta": c["pasta"], "falas": falas, "codigo": _codigo_rev(c["rel"])})
+    return achados
+
+
+def exportar_revisao(raiz: Path, obra: str) -> Dict[str, Any]:
+    """TXT com original + tradução atual + id das falas marcadas `revisar`/`erro` (as demais nem aparecem)."""
+    caps = _para_revisar(raiz, obra)
+    if not caps:
+        raise ValueError("Nenhuma fala marcada para revisão nesta obra.")
+    try:
+        gloss = edicoes.bloco_glossario(edicoes.ler_glossario(raiz, caps[0]["rel"].split("/")[0]))
+    except ErroBaixador:
+        gloss = ""
+    linhas = [f"[{c['codigo']}:{u['id']}] {' '.join(str(u['source']).split())} ::: {' '.join(str(u.get('translation') or '').split())}" for c in caps for u in c["falas"]]
+    texto = INTRODUCAO_REVISAO.format(glossario=gloss) + "\n" + "\n".join(linhas) + "\n"
+    return {"nome": f"{_nome_seguro(obra)}-revisao.txt", "conteudo": texto, "textos": len(linhas), "capitulos": len(caps)}
+
+
+def importar_revisao(raiz: Path, obra: str, conteudos: List[str], gravar: bool) -> Dict[str, Any]:
+    """Lê a resposta da IA e (se `gravar`) atualiza SÓ as falas que ainda estão `revisar`/`erro`. Reaproveita a leitura de linhas da importação."""
+    por_codigo = {c["codigo"]: c for c in _para_revisar(raiz, obra)}
+    pedidos: Dict[str, Dict[str, str]] = {}
+    desconhecidas = 0
+    for texto in conteudos:
+        for bruta in texto.splitlines():
+            r = _ler_linha(bruta)
+            if not r:
+                continue
+            codigo, id_, t = r
+            if codigo not in por_codigo:
+                desconhecidas += 1
+                continue
+            if ":::" in t:
+                t = t.rsplit(":::", 1)[1].strip()
+            pedidos.setdefault(codigo, {})[id_] = t
+    resultado: Dict[str, Any] = {"alteradas": 0, "ignoradas": [], "desconhecidas": desconhecidas, "capitulos": []}
+    for codigo, mud in pedidos.items():
+        c = por_codigo[codigo]
+        if gravar:
+            r = edicoes.aplicar(c["pasta"], mud, estados=_REVISAR)
+        else:
+            marcadas = {u["id"] for u in c["falas"]}
+            r = {"alteradas": [i for i in mud if i in marcadas], "ignoradas": [{"id": i, "motivo": "a fala não está marcada para revisão"} for i in mud if i not in marcadas]}
+        resultado["alteradas"] += len(r["alteradas"])
+        resultado["ignoradas"] += [{"rel": c["rel"], **x} for x in r["ignoradas"]]
+        if r["alteradas"]:
+            resultado["capitulos"].append(c["rel"])
+    resultado["aplicado"] = bool(gravar)
+    return resultado

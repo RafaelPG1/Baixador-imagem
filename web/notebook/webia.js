@@ -31,7 +31,7 @@
     let gerados = [];                                                    // arquivos exportados (para copiar/baixar)
 
     const cab = h('div', 'webia-cab'); cab.append(h('h3', '', `IA na web — ${obra.nome}`));
-    const fechar = btn('Fechar', 'pequeno', () => dlg.close()); cab.append(fechar);
+    const fechar = btn('✕', 'webia-x', () => dlg.close()); fechar.setAttribute('aria-label', 'Fechar'); cab.append(fechar);
     const nota = h('p', 'nota', 'Você copia os textos, traduz no ChatGPT, Gemini ou Claude e cola o resultado aqui. Este programa não envia nada para a internet.');
 
     /* ---- 1. capítulos */
@@ -87,6 +87,8 @@
     const sExp = h('section', 'webia-sec'); sExp.append(h('h4', '', '2. Exportar os textos'));
     const cbIntro = h('input'); cbIntro.type = 'checkbox'; cbIntro.checked = true;
     const lIntro = h('label', 'marcar'); lIntro.append(cbIntro, ' Incluir introdução com instruções para a IA (PT-BR, manter identificadores, não resumir…)');
+    const cbPend = h('input'); cbPend.type = 'checkbox';
+    const lPend = h('label', 'marcar'); lPend.append(cbPend, ' Só as falas pendentes (sem tradução importada ainda)');
     const rUm = h('input'); rUm.type = 'radio'; rUm.name = 'webia-modo'; rUm.checked = true;
     const rVarios = h('input'); rVarios.type = 'radio'; rVarios.name = 'webia-modo';
     const lUm = h('label', 'marcar'); lUm.append(rUm, ' Um único arquivo');
@@ -94,7 +96,7 @@
     const lVarios = h('label', 'marcar'); lVarios.append(rVarios, ' Vários arquivos, de até ', limite, ' caracteres');
     const modo = h('div', 'webia-linha'); modo.append(lUm, lVarios);
     const resultado = h('div', 'webia-resultado');
-    const pedido = () => ({obra: obra.nome, rels: [...marcados].filter((r) => estado.get(r)?.textos), introducao: cbIntro.checked, dividir: rVarios.checked, limite: Number(limite.value) || 12000});
+    const pedido = () => ({obra: obra.nome, rels: [...marcados].filter((r) => estado.get(r)?.textos), introducao: cbIntro.checked, dividir: rVarios.checked, limite: Number(limite.value) || 12000, somente_pendentes: cbPend.checked});
     let assin = '';                                                      // o que já está mostrado: evita refazer (e piscar) a cada consulta
     async function gerarAgora(forcar) {
       const ped = pedido(), chave = JSON.stringify(ped) + '|' + ped.rels.map((r) => estado.get(r)?.textos).join(',');
@@ -116,8 +118,8 @@
       if (gerados.length > 1) resultado.append(btn('Baixar todos organizados (ZIP)', '', async () => { try { await baixarServidor(pedido()); } catch (e) { aviso(e.message); } }));
     }
     const gerar = btn('Atualizar conteúdo', 'pequeno', () => gerarAgora(true));
-    [cbIntro, rUm, rVarios, limite].forEach((i) => i.addEventListener('change', () => gerarAgora()));
-    sExp.append(lIntro, modo, h('div', 'webia-linha').appendChild(gerar).parentNode, resultado);
+    [cbIntro, cbPend, rUm, rVarios, limite].forEach((i) => i.addEventListener('change', () => gerarAgora()));
+    sExp.append(lIntro, lPend, modo, h('div', 'webia-linha').appendChild(gerar).parentNode, resultado);
     sExp.append(h('p', 'nota', 'Cada linha leva um identificador único [código:fala] que liga a tradução à imagem e à posição. Não mude os identificadores.'));
 
     /* ---- 3. importar */
@@ -136,13 +138,19 @@
       seq++; final.textContent = ''; final.className = 'nota';
       mostrar(r, gravar);
       if (!gravar) return;
+      if (r.relatorio.capitulos.length && !r.relatorio.capitulos.some((c) => c.original_reenviado)) limparRasc();   // só limpa depois de gravar com sucesso
       atualizar();
       if (r.aviso) { final.className = 'nota aviso'; final.textContent = r.aviso; }
       if (r.aplicando?.length && r.iniciou) { document.dispatchEvent(new CustomEvent('traducao-iniciada')); confirmar(r.aplicando, Object.fromEntries(r.relatorio.capitulos.map((c) => [c.rel, c.rotulo]))); }
     };
+    const chaveRasc = 'webia-rascunho:' + obra.nome;                       // rascunho: sobrevive a fechar o modal e a recarregar a página
+    try { area.value = localStorage.getItem(chaveRasc) || ''; } catch (_) {}
+    let tRasc = 0;
+    area.addEventListener('input', () => { clearTimeout(tRasc); tRasc = setTimeout(() => { try { area.value ? localStorage.setItem(chaveRasc, area.value) : localStorage.removeItem(chaveRasc); } catch (_) {} }, 400); });
+    const limparRasc = () => { clearTimeout(tRasc); try { localStorage.removeItem(chaveRasc); } catch (_) {} area.value = ''; };
     const escolher = btn('Escolher arquivos TXT…', '', () => arq.click());
     const acoesImp = h('div', 'webia-linha');
-    acoesImp.append(escolher, nomes, btn('Verificar (não grava)', '', () => enviar(false)), btn('Importar', 'principal', () => enviar(true)), arq);
+    acoesImp.append(btn('Limpar rascunho', 'pequeno', limparRasc), escolher, nomes, btn('Verificar (não grava)', '', () => enviar(false)), btn('Importar', 'principal', () => enviar(true)), arq);
     sImp.append(area, acoesImp, relatorio);
 
     function mostrar(r, gravou) {
@@ -196,7 +204,33 @@
       atualizar();
     }
 
-    dlg.append(cab, nota, sCaps, sExp, sImp);
+    /* ---- 4. glossário da obra */
+    const sGlo = h('section', 'webia-sec'); sGlo.append(h('h4', '', 'Glossário da obra'));
+    sGlo.append(h('p', 'nota', 'Um termo por linha, no formato TERMO = tradução. Vale só para esta obra: entra na introdução enviada à IA e é conferido pelo tradutor local.'));
+    const areaGlo = h('textarea', 'webia-area'); areaGlo.rows = 8; areaGlo.spellcheck = false; areaGlo.setAttribute('aria-label', 'Glossário');
+    const doTexto = (t) => Object.fromEntries(t.split('\n').map((l) => l.split('=')).filter((p) => p.length >= 2 && p[0].trim()).map((p) => [p[0].trim(), p.slice(1).join('=').trim()]));
+    (async () => { try { const g = await chamar('/api/web/glossario', {obra: obra.nome}); areaGlo.value = Object.entries(g.termos).map(([k, v]) => `${k} = ${v}`).join('\n'); } catch (_) {} })();
+    sGlo.append(areaGlo, btn('Salvar glossário', 'principal', async () => { try { const g = await chamar('/api/web/glossario/salvar', {obra: obra.nome, termos: doTexto(areaGlo.value)}); aviso(`Glossário salvo: ${Object.keys(g.termos).length} termo(s).`); } catch (e) { aviso(e.message); } }));
+
+    /* ---- 5. revisão por IA */
+    const sRev = h('section', 'webia-sec'); sRev.append(h('h4', '', 'Revisão por IA'));
+    sRev.append(h('p', 'nota', 'Exporta só as falas marcadas “revisar” ou “erro” (original + tradução atual). Cole a resposta da IA abaixo: só essas falas são atualizadas.'));
+    const areaRev = h('textarea', 'webia-area'); areaRev.rows = 5; areaRev.spellcheck = false; areaRev.setAttribute('aria-label', 'Texto revisado');
+    const saidaRev = h('p', 'nota'); saidaRev.setAttribute('role', 'status');
+    const enviarRev = async (gravar) => {
+      if (!areaRev.value.trim()) { aviso('Cole o texto revisado.'); return; }
+      try { const r = await chamar('/api/web/revisao/importar', {obra: obra.nome, textos: [areaRev.value], gravar}); saidaRev.className = 'nota ' + (r.alteradas ? 'ok' : 'erro'); saidaRev.textContent = `${gravar ? 'Atualizadas' : 'Atualizaria'} ${r.alteradas} fala(s)` + (r.ignoradas.length ? ` · ${r.ignoradas.length} ignorada(s): ${r.ignoradas.slice(0, 5).map((x) => x.id + ' (' + x.motivo + ')').join(', ')}` : '') + (r.desconhecidas ? ` · ${r.desconhecidas} linha(s) com código desconhecido` : ''); if (gravar && r.alteradas) { areaRev.value = ''; document.dispatchEvent(new CustomEvent('biblioteca-mudou')); } } catch (e) { aviso(e.message); }
+    };
+    sRev.append(btn('Copiar falas para revisar', 'principal pequeno', async () => { try { const r = await chamar('/api/web/revisao/exportar', {obra: obra.nome}); aviso((await copiar(r.arquivo.conteudo)) ? `${r.arquivo.textos} fala(s) copiada(s). Cole na IA.` : 'Não consegui copiar.'); } catch (e) { aviso(e.message); } }),
+      areaRev, h('div', 'webia-linha').appendChild(btn('Verificar (não grava)', '', () => enviarRev(false))).parentNode, saidaRev);
+    sRev.querySelector('.webia-linha').append(btn('Aplicar revisão', 'principal', () => enviarRev(true)));
+
+    const abas = h('div', 'webia-abas'), corpo = h('div', 'webia-corpo'), secoes = [sCaps, sExp, sImp, sGlo, sRev];
+    abas.setAttribute('role', 'tablist');
+    const botoes = ['Capítulos', 'Exportar', 'Importar', 'Glossário', 'Revisão'].map((t, k) => { const b = h('button', 'webia-aba', t); b.type = 'button'; b.setAttribute('role', 'tab'); b.addEventListener('click', () => ir(k)); return b; });
+    function ir(k) { secoes.forEach((x, i) => { x.hidden = i !== k; botoes[i].classList.toggle('ativa', i === k); botoes[i].setAttribute('aria-selected', String(i === k)); }); corpo.scrollTop = 0; }
+    abas.append(...botoes); corpo.append(nota, ...secoes); ir(0);
+    dlg.append(cab, abas, corpo);
     document.body.append(dlg);
     dlg.addEventListener('close', () => { clearInterval(timer); dlg.remove(); dlg = null; });
     desenharLista(); atualizar(); timer = setInterval(atualizar, 4000);

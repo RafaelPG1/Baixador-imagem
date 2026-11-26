@@ -31,7 +31,7 @@ def criar(raiz: Path, obra: str, numero: int, codigo: str, n: int = 20, preparad
 
 def _textos(pasta: Path, numero: int, codigo: str, n: int = 20) -> None:
     web = pasta / "traducao.nova" / "web"
-    web.mkdir(parents=True)
+    web.mkdir(parents=True, exist_ok=True)
     unidades = [{"id": f"p{i:03d}-b1", "fonte": f"Hello {numero}-{i}", "hash": f"h{codigo}{i}"} for i in range(1, n + 1)]
     (web / "textos.json").write_text(json.dumps({"codigo": codigo, "unidades": unidades}), encoding="utf-8")
 
@@ -212,6 +212,57 @@ class Fila(unittest.TestCase):
         self.tarefa._thread.join(10)
         self.assertEqual([i["estado"] for i in self.tarefa.itens], ["aguardando", "pronto"])
         self.assertEqual(len(web_ia.ler_importadas(self.raiz / self.rels[1], web_ia.ler_textos(self.raiz / self.rels[1]))), 19)
+
+    def test_excluir_so_bloqueia_capitulo_em_uso(self):
+        t = self.tarefa
+        with t._lock:
+            t.estado = "executando"
+            t.itens = [{"nome": "x", "rel": self.rels[n], "estado": e, "etapa": "", "feitas": 0, "total": 1} for n, e in ((1, "traduzindo"), (2, "fila"), (3, "aguardando"))]
+        em_uso = lambda obra="", rels=None: Manipulador._em_uso(self.stub, obra, rels)
+        self.assertTrue(em_uso("", [self.rels[1]]))
+        self.assertTrue(em_uso("", [self.rels[2], self.rels[4]]))
+        self.assertFalse(em_uso("", [self.rels[3], self.rels[4]]), "aguardando e sem uso podem ser apagados")
+        self.assertFalse(em_uso("Obra B"))
+        self.assertTrue(em_uso("Obra A"))
+        t.estado = "concluido"
+        self.assertFalse(em_uso("Obra A"))
+
+    def test_pedir_mais_capitulos_com_traducao_rodando_so_da_mesma_obra(self):
+        t = self.tarefa
+        with t._lock:
+            t.estado, t._cfg, t._fechada = "executando", {"motor": "web"}, False   # config.ler() está trocada por "web" nestes testes
+            t.itens = [{"nome": "x", "rel": self.rels[1], "estado": "traduzindo", "etapa": "", "feitas": 0, "total": 1}]
+            t._pastas, t.capitulos = [self.raiz / self.rels[1]], 1
+        Manipulador._traduzir(self.stub, {"rels": [self.rels[1], self.rels[2], self.rels[3]]})
+        self.assertEqual(self.stub.respostas[-1][0], 200)
+        self.assertEqual([(i["rel"], i["estado"]) for i in t.itens], [(self.rels[1], "traduzindo"), (self.rels[2], "fila"), (self.rels[3], "fila")])
+        Manipulador._traduzir(self.stub, {"rels": [self.b1]})
+        self.assertEqual(self.stub.respostas[-1][0], 422)
+        self.assertEqual(len(t.itens), 3)
+
+
+
+class Caches(unittest.TestCase):
+    """Os caches de desempenho nunca devolvem dado velho depois de uma mudança."""
+
+    def test_listar_e_leituras_acompanham_mudancas_no_disco(self):
+        with tempfile.TemporaryDirectory() as d:
+            raiz = Path(d)
+            rel = criar(raiz, "Obra A", 1, "aaaaaaa1")
+            self.assertEqual([c["rel"] for o in acervo.listar(raiz)["obras"] for c in o["capitulos"]], [rel])
+            self.assertIs(acervo.listar(raiz), acervo.listar(raiz), "segunda chamada sem mudança vem do cache")
+            criar(raiz, "Obra A", 2, "aaaaaaa2")                                    # capítulo novo → cache refeito
+            self.assertEqual(len([c for o in acervo.listar(raiz)["obras"] for c in o["capitulos"]]), 2)
+            pasta = raiz / rel
+            self.assertEqual(len(web_ia.ler_textos(pasta)["unidades"]), 20)
+            _textos(pasta, 1, "aaaaaaa1", 5)                                         # textos.json reescrito → leitura refeita
+            self.assertEqual(len(web_ia.ler_textos(pasta)["unidades"]), 5)
+            self.assertEqual(web_ia.ler_importadas(pasta, web_ia.ler_textos(pasta)), {})
+            web_ia.gravar(web_ia.analisar(raiz, [linhas("aaaaaaa1", 1, [1, 2])]))
+            imp = web_ia.ler_importadas(pasta, web_ia.ler_textos(pasta))
+            self.assertEqual(sorted(imp), ["p001-b1", "p002-b1"])
+            imp.clear()                                                              # quem recebe pode alterar: não suja o cache
+            self.assertEqual(len(web_ia.ler_importadas(pasta, web_ia.ler_textos(pasta))), 2)
 
 
 if __name__ == "__main__":

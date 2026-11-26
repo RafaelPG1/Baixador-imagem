@@ -38,3 +38,7 @@ body.v-sem-baloes .v-balao, body.v-sem-regioes .v-regiao { display: none; }
   background: rgba(20, 26, 35, .98); border: 1px solid rgba(255,255,255,.18); box-shadow: 0 6px 22px rgba(0,0,0,.45); font: .82rem/1.35 "Segoe UI", system-ui, sans-serif; }
 #v-dica .v-d-info { margin-top: 4px; color: #8c9bb0; font-size: .75rem; }
 @media (min-width: 900px) { body.v-aberto main { margin-left: max(0px, calc((100vw - min(var(--largura, 800px), 100vw)) / 2 - 200px)); } }
+.v-edit { margin-top: 6px; }
+.v-edit button { min-height: 32px; padding: 0 12px; margin-right: 6px; border: 1px solid #3a4a60; border-radius: 6px; background: #1f2a38; color: #e7ebf1; cursor: pointer; font: inherit; font-size: .82rem; }
+.v-edit-t { width: 100%; box-sizing: border-box; margin: 6px 0; padding: 6px 8px; border-radius: 6px; border: 1px solid #3a4a60; background: #10151c; color: #e7ebf1; font: inherit; resize: vertical; }
+.v-edit-m { display: block; margin-top: 4px; color: #8be8b4; }

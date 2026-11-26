@@ -68,6 +68,7 @@ async function prepararAuxiliares(cap, work, log) {
   const fontes = [
     [path.join(path.dirname(cap), 'glossario.json'), 'glossario.json', 'glossário da obra'],
     [path.join(cap, 'correcoes.json'), 'correcoes.json', 'correções do capítulo'],
+    [path.join(cap, 'edicoes.json'), 'edicoes.json', 'edições de falas'],
   ];
   for (const [src, nome, rotulo] of fontes) {
     if (!(await isFile(src))) continue;

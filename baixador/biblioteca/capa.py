@@ -144,11 +144,6 @@ def candidatas_da_pagina(html: str, base: str) -> List[str]:
     return achadas
 
 
-def capa_da_pagina(html: str, base: str) -> Optional[str]:
-    achadas = candidatas_da_pagina(html, base)
-    return achadas[0] if achadas else None
-
-
 def gravar(pasta_obra: Path, dados: bytes, substituir: bool = False) -> Optional[Path]:
     """Grava `capa.<ext>` se for imagem de verdade. Sem `substituir`, nunca troca uma capa existente."""
     pasta_obra = Path(pasta_obra)

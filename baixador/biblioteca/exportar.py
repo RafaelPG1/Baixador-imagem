@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any, BinaryIO, Dict, List, Optional, Tuple
 from urllib.parse import quote
 
-from baixador.biblioteca import acervo, organizacao
+from baixador.biblioteca import acervo, compactar, organizacao
 
 from baixador.biblioteca.capa import achar as achar_capa
 from baixador.biblioteca.capitulo import dados_do_capitulo, pasta_do_capitulo, pasta_imagens
@@ -28,9 +28,9 @@ from baixador.biblioteca.capitulo import dados_do_capitulo, pasta_do_capitulo, p
 FORMATO = 1
 
 
-def gerar_zip(raiz: Path, caps: List[Dict[str, Any]], saida: BinaryIO) -> Dict[str, int]:
+def gerar_zip(raiz: Path, caps: List[Dict[str, Any]], saida: BinaryIO, compacto: bool = False) -> Dict[str, int]:
     """Grava em `saida` o ZIP dos capítulos `caps` (itens de `acervo.listar`, com `rel`, `numero`, `titulo`, `rotulo`).
-    Capítulo que sumiu ou ficou sem imagens é ignorado. Devolve {"capitulos": n, "imagens": n}."""
+    `compacto`: imagens em WebP ~1080 px (cache em dados/); as que não puderem ser convertidas vão no original. Capítulo que sumiu ou ficou sem imagens é ignorado. Devolve {"capitulos": n, "imagens": n}."""
     raiz = Path(raiz)
     obras: List[Dict[str, Any]] = []
     indice_obra: Dict[str, int] = {}
@@ -53,10 +53,15 @@ def gerar_zip(raiz: Path, caps: List[Dict[str, Any]], saida: BinaryIO) -> Dict[s
                 obras.append({"nome": nome_obra, "capa": caminho_capa})
             d = f"c{len(capitulos)}"
             origem = pasta_imagens(pasta)
+            leves = compactar.preparar(c["rel"], origem, [im["arq"] for im in dados["imagens"]]) if compacto else {}
             for im in dados["imagens"]:
                 arquivo = origem / im["arq"]
                 if arquivo.is_file() and not arquivo.is_symlink():
-                    z.write(arquivo, f"{d}/img/{im['arq']}")
+                    if im["arq"] in leves:                       # mesma proporção: o PNG de limpeza e as falas continuam alinhados
+                        original, im["arq"] = im["arq"], leves[im["arq"]].name
+                        z.write(leves[original], f"{d}/img/{im['arq']}")
+                    else:
+                        z.write(arquivo, f"{d}/img/{im['arq']}")
                     imagens += 1
             limpeza = pasta / "traducao" / "limpeza"
             for im in dados["imagens"]:
@@ -95,7 +100,7 @@ def selecionar(raiz: Path, rels: List[str], obra: str = "") -> List[Tuple[str, D
     return todos[:MAX_CAPITULOS]
 
 
-def zip_temporario(raiz: Path, rels: List[str], obra: str = "") -> Optional[Tuple[BinaryIO, int, str]]:
+def zip_temporario(raiz: Path, rels: List[str], obra: str = "", compacto: bool = False) -> Optional[Tuple[BinaryIO, int, str]]:
     """Monta o ZIP num arquivo temporário (não na memória). Devolve (arquivo posicionado no início, tamanho, nome sugerido)
     ou None se não houver nada para exportar. Quem recebe o arquivo deve fechá-lo."""
     todos = selecionar(raiz, rels, obra)
@@ -103,7 +108,7 @@ def zip_temporario(raiz: Path, rels: List[str], obra: str = "") -> Optional[Tupl
         return None
     arquivo = tempfile.TemporaryFile()
     try:
-        resumo = gerar_zip(raiz, [c for _, c in todos], arquivo)
+        resumo = gerar_zip(raiz, [c for _, c in todos], arquivo, compacto)
         if not resumo["capitulos"]:
             arquivo.close()
             return None

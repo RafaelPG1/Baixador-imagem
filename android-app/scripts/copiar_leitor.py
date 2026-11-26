@@ -27,8 +27,9 @@ def main() -> None:
     (DESTINO / "leitor.html").write_text(html, encoding="utf-8")
     for nome in ("layout.js", "leitor.js", "leitor.css"):
         (DESTINO / nome).write_text((ORIGEM / nome).read_text(encoding="utf-8"), encoding="utf-8")
+    (DESTINO / "sincronia.js").write_text((RAIZ / "web" / "compartilhado" / "sincronia.js").read_text(encoding="utf-8"), encoding="utf-8")   # histórico/sincronia: o app.js e o celular usam o mesmo
     (DESTINO / "comic-neue-700.woff2").write_bytes((RAIZ / "web" / "compartilhado" / "fontes" / "comic-neue-700.woff2").read_bytes())
-    print("Leitor da web copiado para o app: leitor.html, layout.js, leitor.js, leitor.css e a fonte.")
+    print("Leitor da web copiado para o app: leitor.html, layout.js, leitor.js, leitor.css, sincronia.js e a fonte.")
 
 
 if __name__ == "__main__":

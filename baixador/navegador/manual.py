@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 from urllib.parse import urljoin, urlsplit
 
-from baixador.nucleo import seguranca
+from baixador.nucleo import energia, seguranca
 from baixador.navegador import capitulos_site as cs
 from baixador.nucleo.sequencia import dimensoes_suspeitas, numeros_ausentes
 from baixador.navegador.captura import Capturador, _resumo
@@ -986,6 +986,8 @@ class SessaoManual:
         modo: str = "rapido", pular_primeiro: bool = False,
     ) -> None:
         manter_aberto = False
+        energia_ = energia.acordado()
+        energia_.__enter__()                                # a continuação automática dura horas: o notebook não suspende
         try:
             estado = self._esperar_estado(("abrindo",), 180)
             if estado != "aguardando" or self._fechar.is_set():
@@ -1096,6 +1098,7 @@ class SessaoManual:
             if self.continuar_ativo:
                 self._definir_aviso(f"O modo automático parou por um erro ({erro.__class__.__name__}). Veja o andamento.")
         finally:
+            energia_.__exit__(None, None, None)
             with self._lock:
                 self.automatico_ativo = False
                 self.continuar_ativo = False
@@ -1188,6 +1191,8 @@ class SessaoManual:
     def baixar(self, ids: List[int], pasta: str, meta: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         if not self._salvando.acquire(blocking=False):
             raise RuntimeError("Já existe um salvamento em andamento.")
+        energia_ = energia.acordado()
+        energia_.__enter__()                                                # o notebook não suspende enquanto salva
         try:
             with self._lock:
                 self.salvando = True
@@ -1229,6 +1234,7 @@ class SessaoManual:
                 "falhas": [{"url": u, "motivo": m} for u, m in falhas],
             }
         finally:
+            energia_.__exit__(None, None, None)
             with self._lock:
                 self.salvando = False
             self._salvando.release()

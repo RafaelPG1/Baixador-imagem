@@ -1,7 +1,15 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <!-- Necessária para abrir o instalador com o APK da atualização (o usuário ainda precisa confirmar a instalação). -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- Download em segundo plano com notificação de progresso (serviço em primeiro plano do tipo dataSync). -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <application>
+        <service
+            android:name="com.baixador.salvar.ServicoDownload"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
         <provider
             android:name="com.baixador.salvar.ApkFileProvider"
             android:authorities="${applicationId}.baixadorfp"

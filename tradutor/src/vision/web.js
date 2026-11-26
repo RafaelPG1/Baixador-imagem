@@ -8,7 +8,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { collectUnits, glossaryMisses } from './translate.js';
+import { applyEdits, collectUnits, glossaryMisses } from './translate.js';
 
 export const NOME_WEB = 'IA na web (manual)';
 const hasLetters = (s) => /[A-Za-z]/.test(s);
@@ -74,12 +74,13 @@ export async function translateWeb(ocrFile, outDir, { log = console.log } = {}) 
   if (!ocr) throw new Error(`Não achei ${ocrFile}.`);
   const fixes = await readJson(path.join(base, 'correcoes.json'), {});
   const glossary = await readJson(path.join(base, 'glossario.json'), {});
+  const edits = await readJson(path.join(base, 'edicoes.json'), {});
   const textos = await readJson(path.join(webDir(work), 'textos.json'), null);
   const imp = await readJson(path.join(webDir(work), 'importadas.json'), null);
   const valida = imp && textos && imp.codigo === textos.codigo ? imp.traducoes ?? {} : {};
   const units = collectUnits(ocr, fixes);
   const stats = { units: units.length, batches: 0, cached: 0, translated: 0, individual: 0, errors: 0 };
-  const out = units.map((u) => {
+  const out = applyEdits(units.map((u) => {
     const b = { id: u.id, page: u.page, file: u.file, balloonId: u.balloonId, textIds: u.textIds, bbox: u.bbox, source: u.source };
     if (!hasLetters(u.source)) return { ...b, translation: u.source, status: 'copiado', mode: null, batch: null }; // só números/pontuação
     const r = valida[u.id];
@@ -91,7 +92,7 @@ export async function translateWeb(ocrFile, outDir, { log = console.log } = {}) 
     stats.translated++;
     const misses = glossaryMisses(u.source, t, glossary);
     return { ...b, translation: t, status: misses.length ? 'revisar' : 'ok', glossary: misses, mode: 'web', batch: null };
-  });
+  }), edits);
   const doc = { generatedAt: new Date().toISOString(), engine: 'web', provider: NOME_WEB, source: path.relative(outDir, ocrFile).split(path.sep).join('/'), stats, units: out };
   await mkdir(outDir, { recursive: true });
   await writeFile(path.join(outDir, 'traducao.json'), JSON.stringify(doc, null, 2));

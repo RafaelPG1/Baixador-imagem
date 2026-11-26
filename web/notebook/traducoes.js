@@ -1,7 +1,7 @@
 /* Aba Traduções: acompanha a tradução em andamento (a mesma tarefa usada pela Biblioteca e pelo "Traduzir automaticamente"). */
 (() => {
   let cursorLog = 0, rodando = false, vistoInicio = 0, pendente = null;
-  const ROTULO = {fila: 'Na fila', traduzindo: 'Traduzindo…', pronto: 'Pronto', falhou: 'Falhou', cancelado: 'Cancelado', aguardando: 'Aguardando IA web'};
+  const ROTULO = {fila: 'Na fila', traduzindo: 'Traduzindo…', pronto: 'Pronto', falhou: 'Falhou', cancelado: 'Cancelado', aguardando: 'Aguardando IA web', interrompido: 'Interrompido'};
   const hms = (s) => { s = Math.max(0, Math.round(s)); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60; return (h ? h + 'h ' : '') + (h || m ? String(m).padStart(h ? 2 : 1, '0') + 'min ' : '') + String(x).padStart(h || m ? 2 : 1, '0') + 's'; };
   const visivel = () => !$('pg-traducoes').hidden;
 
@@ -36,7 +36,10 @@
     $('tr-barra-in').style.width = pct + '%';
     const fim = e.fim || e.agora, dec = Math.max(0, fim - e.inicio);
     const partes = [`${pct}%`, `${e.prontos}/${e.capitulos} capítulo(s) prontos para ler`, `decorrido ${hms(dec)}`];
-    if (ativo && feitas > 0 && total > feitas) partes.push(`faltam cerca de ${hms(dec * (total - feitas) / feitas)}`);
+    if (ativo && e.eta != null) partes.push(`faltam cerca de ${hms(e.eta)} (estimativa pelos capítulos anteriores)`);      // histórico real; não é horário garantido
+    else if (ativo && feitas > 0 && total > feitas) partes.push(`faltam cerca de ${hms(dec * (total - feitas) / feitas)} (estimativa)`);
+    const parados = itens.filter((i) => i.estado === 'interrompido').length;
+    if (parados && !ativo) partes.push(`${parados} capítulo(s) interrompido(s) quando o programa foi fechado: retome ou remova abaixo`);
     $('tr-numeros').textContent = partes.join(' · ');
 
     const ul = $('tr-fila');
@@ -58,6 +61,15 @@
         x.title = 'Abre o texto pronto para a IA e a área para colar a tradução';
         x.addEventListener('click', () => { const f = typeof achar === 'function' ? achar(i.rel) : null; if (f) WebIA.abrir(f.obra, new Set([i.rel])); else aviso('Abra a obra na Biblioteca → Mais ações → Tradução com IA na web.'); });
         li.append(x);
+      }
+      if (i.rel && i.estado === 'interrompido') {
+        const r = document.createElement('button'); r.type = 'button'; r.className = 'btn pequeno principal'; r.textContent = 'Retomar';
+        r.title = 'Volta à fila; o que já foi feito deste capítulo é aproveitado';
+        r.addEventListener('click', async () => { try { await chamar('/api/traducao/retomar', {rel: i.rel}); document.dispatchEvent(new CustomEvent('traducao-iniciada')); } catch (x) { aviso(x.message); } sondar(); });
+        const d = document.createElement('button'); d.type = 'button'; d.className = 'btn pequeno'; d.textContent = 'Remover';
+        d.title = 'Tira da fila. Nenhum arquivo é apagado.';
+        d.addEventListener('click', async () => { try { await chamar('/api/traducao/remover', {rel: i.rel}); } catch (x) { aviso(x.message); } sondar(); });
+        li.append(r, d);
       }
       if (i.rel && (i.estado === 'cancelado' || i.estado === 'falhou')) {
         const x = document.createElement('button'); x.type = 'button'; x.className = 'btn pequeno'; x.textContent = 'Tentar de novo';
@@ -88,6 +100,15 @@
   $('tr-limpar-cancelados').addEventListener('click', () => limpar('cancelado'));
   $('tr-limpar-prontos').addEventListener('click', () => limpar('pronto'));
 
+  /* aviso de fim da fila: dentro do site e, com permissão, do navegador (não é horário nem promessa: só diz que parou) */
+  function avisarFim(e) {
+    const r = e.resumo || {};
+    const texto = e.estado === 'concluido' ? `Fila terminada: ${r.falas || 0} fala(s) em ${r.capitulos || 0} capítulo(s)${r.aguardando ? `, ${r.aguardando} aguardando a IA web` : ''}.`
+      : e.erro === 'Tradução cancelada.' ? 'Tradução cancelada.' : `A tradução parou: ${e.erro || 'erro'}`;
+    aviso(texto);
+    try { if ('Notification' in window && Notification.permission === 'granted' && document.hidden) new Notification('Baixador de Imagens', {body: texto}); } catch (_) {}
+  }
+  document.addEventListener('traducao-iniciada', () => { try { if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission(); } catch (_) {} });
   async function sondar() {
     clearTimeout(pendente);
     let proximo = 6000;
@@ -98,7 +119,8 @@
           vistoInicio = e.inicio; cursorLog = 0; $('tr-log').textContent = '';
           if (e.log_total) e = await ler('/api/traducao/estado', '&log=0');
         }
-        rodando = e.estado === 'executando'; desenhar(e);
+        const estavaRodando = rodando; rodando = e.estado === 'executando'; desenhar(e);
+        if (estavaRodando && !rodando) avisarFim(e);
         proximo = rodando ? 1000 : visivel() ? 3000 : 6000;
       } catch (_) {}
     }

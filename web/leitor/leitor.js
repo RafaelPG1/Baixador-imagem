@@ -152,7 +152,7 @@
   function marcarLido() {
     if (marcado || !relCanonico) return; marcado = true;
     if (tok) fetch(api('/api/lidos'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rel: relCanonico, lido: true }) }).catch(function () { marcado = false; });
-    else { try { localStorage.setItem('lido:' + relCanonico, '1'); } catch (_) {} }
+    else { try { localStorage.setItem('lido:' + relCanonico, '1'); var hh = histLocal(); hh.lidos = hh.lidos || {}; hh.lidos[relCanonico] = { v: true, t: Date.now() }; localStorage.setItem(HIST, JSON.stringify(hh)); } catch (_) {} }
   }
   function atualizarProgresso() {
     var total = figuras.length; if (!total) return;
@@ -302,11 +302,125 @@
     var sc = document.createElement('script'); sc.src = '/estatico/verificacao.js'; document.body.appendChild(sc);
   }
 
+  /* ---------- retomar leitura: salva (p, n, f) com calma e volta exatamente ao ponto ---------- */
+  var HIST = 'baixador.hist';                                         // celular/app: histórico local, sincronizado pela biblioteca; notebook: no servidor
+  function histLocal() { try { return JSON.parse(localStorage.getItem(HIST)) || {}; } catch (_) { return {}; } }
+  function posicaoAtual() {
+    var total = figuras.length; if (!total) return null;
+    var meio = window.innerHeight * 0.4, p = 1;
+    for (var j = 0; j < total; j++) { if (figuras[j].getBoundingClientRect().top <= meio) p = j + 1; else break; }
+    var r = figuras[p - 1].getBoundingClientRect();
+    var f = r.height > 0 ? Math.min(1, Math.max(0, (meio - r.top) / r.height)) : 0;
+    if (window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 2) { p = total; f = 1; }   // chegou ao fim: capítulo terminado
+    return { p: p, n: total, f: Math.round(f * 1000) / 1000 };
+  }
+  var ultimaGravada = null;
+  function gravarPosicao(rapido) {
+    var a = posicaoAtual(); if (!a || !relCanonico || (window.scrollY === 0 && a.p === 1)) return;
+    if (ultimaGravada && ultimaGravada.p === a.p && ultimaGravada.n === a.n && Math.abs(ultimaGravada.f - a.f) < 0.01) return;   // não mudou: sem escrita
+    ultimaGravada = a;
+    var t = Date.now();
+    if (tok) fetch(api('/api/historico/posicao'), { method: 'POST', keepalive: !!rapido, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rel: relCanonico, p: a.p, n: a.n, f: a.f, t: t }) }).catch(function () { ultimaGravada = null; });
+    else { var h = histLocal(); h.posicoes = h.posicoes || {}; h.posicoes[relCanonico] = { p: a.p, n: a.n, f: a.f, t: t }; try { localStorage.setItem(HIST, JSON.stringify(h)); } catch (_) {} }
+  }
+  var tPos = 0;
+  window.addEventListener('scroll', function () { clearTimeout(tPos); tPos = setTimeout(gravarPosicao, 3000); }, { passive: true });   // só quando a rolagem para por 3 s
+  document.addEventListener('visibilitychange', function () { if (document.hidden) gravarPosicao(true); });
+  window.addEventListener('pagehide', function () { gravarPosicao(true); });
+
+  var usouRolagem = false;
+  ['wheel', 'touchstart', 'keydown'].forEach(function (ev) { window.addEventListener(ev, function () { usouRolagem = true; }, { passive: true, once: true }); });
+  function aviso(texto, acao, rotulo) {
+    var n = document.createElement('div'); n.id = 'retomado'; n.setAttribute('role', 'status');
+    n.append(document.createTextNode(texto + ' '));
+    if (acao) { var b = document.createElement('button'); b.type = 'button'; b.textContent = rotulo; b.addEventListener('click', function () { acao(); n.remove(); }); n.append(b); }
+    document.body.append(n); setTimeout(function () { n.remove(); }, 8000);
+  }
+  function irParaPosicao(pos) {
+    var fig = figuras[pos.p - 1]; if (!fig) return;
+    var r = fig.getBoundingClientRect();
+    window.scrollTo(0, Math.max(0, window.scrollY + r.top + pos.f * r.height - window.innerHeight * 0.4));
+  }
+  function retomar(pos) {
+    if (!pos || pos.p >= pos.n || pos.n !== figuras.length || (pos.p === 1 && pos.f < 0.02) || location.hash || params.get('inicio') === '1' || params.get('pagina')) return;
+    ultimaGravada = { p: pos.p, n: pos.n, f: pos.f };
+    var tentativas = 0;
+    function aplicar() { if (usouRolagem) return; irParaPosicao(pos); }
+    aplicar();
+    principal.addEventListener('load', function () { if (++tentativas < 400) aplicar(); }, true);   // imagens carregando mudam a altura: reajusta até a pessoa rolar
+    window.addEventListener('load', aplicar);
+    setTimeout(function () { usouRolagem = true; }, 6000);
+    aviso('Retomado na página ' + pos.p + ' de ' + pos.n + '.', function () { usouRolagem = true; window.scrollTo(0, 0); }, 'Começar do início');
+  }
+  function irParaPaginaPedida() {                                    // ?pagina=N (vem da pesquisa): abre direto na página da fala
+    var n = parseInt(params.get('pagina'), 10); if (!(n >= 1) || !figuras[n - 1]) return;
+    function ir() { if (!usouRolagem) figuras[n - 1].scrollIntoView(); }
+    ir(); principal.addEventListener('load', ir, true); window.addEventListener('load', ir); setTimeout(function () { usouRolagem = true; }, 6000);
+  }
+  function carregarPosicao() {
+    if (params.get('pagina')) { irParaPaginaPedida(); return; }
+    if (tok) fetch(api('/api/historico'), { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (h) { retomar((h.posicoes || {})[relCanonico]); }).catch(function () {});
+    else retomar((histLocal().posicoes || {})[relCanonico]);
+  }
+
+  /* ---------- atalhos de teclado (nunca dentro de campos de texto) ---------- */
+  document.addEventListener('keydown', function (e) {
+    if (e.ctrlKey || e.metaKey || e.altKey || e.defaultPrevented) return;
+    var alvo = e.target, tag = alvo && alvo.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (alvo && alvo.isContentEditable)) return;
+    var k = e.key.length === 1 ? e.key.toLowerCase() : e.key, passo = Math.round(window.innerHeight * 0.85);
+    if (k === 'ArrowRight' || k === 'ArrowLeft') { var a = $(k === 'ArrowRight' ? 'proximo' : 'anterior'); if (a && a.getAttribute('href')) { e.preventDefault(); a.click(); } }
+    else if (k === 'j') window.scrollBy({ top: passo, behavior: 'smooth' });
+    else if (k === 'k') window.scrollBy({ top: -passo, behavior: 'smooth' });
+    else if (k === ' ' && tag !== 'BUTTON' && tag !== 'A') { e.preventDefault(); window.scrollBy({ top: e.shiftKey ? -passo : passo, behavior: 'smooth' }); }
+    else if (k === 't') idioma.click();
+  });
+
+  /* ---------- ajustes de leitura (guardados neste aparelho) ---------- */
+  var CHAVE_AJ = 'baixador.ajustes', FUNDOS = [['#10151c', 'Padrão'], ['#000000', 'Preto'], ['#1e1e1e', 'Cinza escuro'], ['#f4efe4', 'Papel']];
+  var aj = (function () { try { return JSON.parse(localStorage.getItem(CHAVE_AJ)) || {}; } catch (_) { return {}; } })();
+  function aplicarAjustes() {
+    var raiz = document.documentElement.style;
+    if (aj.largura) raiz.setProperty('--largura', aj.largura + 'px'); else raiz.removeProperty('--largura');
+    if (aj.fundo) raiz.setProperty('--fundo', aj.fundo); else raiz.removeProperty('--fundo');
+    principal.style.filter = aj.brilho && aj.brilho !== 100 ? 'brightness(' + aj.brilho / 100 + ')' : '';
+  }
+  function salvarAjustes() { try { localStorage.setItem(CHAVE_AJ, JSON.stringify(aj)); } catch (_) {} aplicarAjustes(); }
+  var lock = null;
+  function pedirTela() { if (!aj.tela || !navigator.wakeLock || document.hidden || lock) return; navigator.wakeLock.request('screen').then(function (l) { lock = l; l.addEventListener('release', function () { lock = null; }); }).catch(function () { lock = null; }); }
+  function soltarTela() { if (lock) { lock.release().catch(function () {}); lock = null; } }
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) pedirTela(); });
+  function montarAjustes() {
+    var col = $('coluna'); if (!col) return;
+    var b = document.createElement('button'); b.type = 'button'; b.id = 'ajustes'; b.title = 'Ajustes de leitura'; b.setAttribute('aria-label', 'Ajustes de leitura'); b.setAttribute('aria-expanded', 'false');
+    b.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></svg>';
+    col.append(b);
+    var pn = document.createElement('div'); pn.className = 'fl'; pn.id = 'painel-ajustes'; pn.hidden = true;
+    function linha(rotulo, ctl) { var l = document.createElement('label'); l.append(document.createTextNode(rotulo)); l.append(ctl); return l; }
+    var larg = document.createElement('input'); larg.type = 'range'; larg.min = 480; larg.max = 1400; larg.step = 20; larg.value = aj.largura || 800;
+    larg.addEventListener('input', function () { aj.largura = Number(larg.value); salvarAjustes(); });
+    var bri = document.createElement('input'); bri.type = 'range'; bri.min = 40; bri.max = 120; bri.step = 5; bri.value = aj.brilho || 100;
+    bri.addEventListener('input', function () { aj.brilho = Number(bri.value); salvarAjustes(); });
+    var cores = document.createElement('div'); cores.className = 'cores';
+    FUNDOS.forEach(function (f) { var c = document.createElement('button'); c.type = 'button'; c.title = f[1]; c.setAttribute('aria-label', 'Fundo ' + f[1]); c.style.background = f[0]; c.addEventListener('click', function () { aj.fundo = f[0] === '#10151c' ? '' : f[0]; salvarAjustes(); }); cores.append(c); });
+    var tela = document.createElement('input'); tela.type = 'checkbox'; tela.checked = !!aj.tela;
+    var suportaTela = !!navigator.wakeLock; if (!suportaTela) tela.disabled = true;
+    tela.addEventListener('change', function () { aj.tela = tela.checked; salvarAjustes(); if (aj.tela) pedirTela(); else soltarTela(); });
+    var rst = document.createElement('button'); rst.type = 'button'; rst.className = 'rst'; rst.textContent = 'Restaurar padrão';
+    rst.addEventListener('click', function () { aj = {}; salvarAjustes(); soltarTela(); larg.value = 800; bri.value = 100; tela.checked = false; });
+    pn.append(linha('Largura (computador)', larg), linha('Brilho', bri), linha('Fundo', cores), linha('Manter a tela ligada' + (suportaTela ? '' : ' (este navegador não permite)'), tela), rst);
+    document.body.append(pn);
+    b.addEventListener('click', function (e) { e.stopPropagation(); pn.hidden = !pn.hidden; b.setAttribute('aria-expanded', String(!pn.hidden)); });
+    document.addEventListener('click', function (e) { if (!pn.hidden && !pn.contains(e.target) && e.target !== b && !b.contains(e.target)) { pn.hidden = true; b.setAttribute('aria-expanded', 'false'); } });
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && !pn.hidden) { pn.hidden = true; b.setAttribute('aria-expanded', 'false'); } });
+  }
+  aplicarAjustes();
+
   /* ---------- início ---------- */
   var acesso = fetch(api('/api/leitura', 'c=' + encodeURIComponent(relPedido) + (raizId ? '&r=' + encodeURIComponent(raizId) : '')), { cache: 'no-store' });
   acesso.then(function (r) { return r.ok ? r.json() : Promise.reject(r.status); }).then(function (d) {
     relCanonico = d.rel;
-    montar(d); montarProgresso(); atualizarIdioma(); carregarObra();
+    montar(d); montarProgresso(); atualizarIdioma(); carregarObra(); montarAjustes(); pedirTela(); carregarPosicao();
     if (d.admin) carregarVerificacao(d);                             // leitura da BIBLIOTECA: só o notebook manda d.admin e entrega estes arquivos
     document.addEventListener('visibilitychange', function () { if (!document.hidden) carregarObra(); });
     setInterval(function () { if (!document.hidden) carregarObra(); }, 20000);   // capítulos novos: o "172/175" acompanha

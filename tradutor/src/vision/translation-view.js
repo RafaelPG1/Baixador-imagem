@@ -40,7 +40,7 @@ export function buildView({ results, translation, ocr = null, results3Dir, outDi
     const o = ocrById.get(u.id);
     page.units.push({
       id: u.id, order: order + 1, balloonId: u.balloonId, textIds: u.textIds, bbox: u.bbox,
-      source: u.source, translation: u.translation, status: u.status, error: u.error ?? null, mode: u.mode, glossary: u.glossary ?? [],
+      source: u.source, translation: u.translation, status: u.status, error: u.error ?? null, editada: u.editada ?? false, mode: u.mode, glossary: u.glossary ?? [],
       ocr: o ? { status: o.status, engine: o.engine, confidence: o.confidence, edited: o.edited, joinedWith: o.joinedWith } : null,
     });
   }

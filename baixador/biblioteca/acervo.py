@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlsplit
 
-from baixador.biblioteca import capa, lidos, obra as dados_obra, organizacao as org
+from baixador.biblioteca import capa, lidos, lixeira, obra as dados_obra, organizacao as org
 from baixador.nucleo.erros import ErroBaixador
 from baixador.biblioteca.capitulo import NOME_IMG, NOME_TRADUCAO, _varrer
 
@@ -48,7 +48,24 @@ def _ultima_url(raiz: Path, caps: List[Dict[str, Any]]) -> str:
     return ""
 
 
+_cache_listar: Dict[str, Any] = {"chave": None, "valor": None}
+
+
 def listar(raiz: Path) -> Dict[str, Any]:
+    """Todas as obras (ver `_listar`). Refeita só quando a impressão digital da biblioteca (`versao`) ou o conjunto de lidos muda: a aba
+    Traduções e o celular consultam isto a cada poucos segundos, e varrer centenas de capítulos custava ~140 ms por consulta.
+    O resultado é compartilhado: quem chama só lê."""
+    chave = (str(raiz), versao(raiz), lidos.todos())
+    with _trava_listar:
+        if _cache_listar["chave"] == chave:
+            return _cache_listar["valor"]
+    valor = _listar(Path(raiz))
+    with _trava_listar:
+        _cache_listar.update(chave=chave, valor=valor)
+    return valor
+
+
+def _listar(raiz: Path) -> Dict[str, Any]:
     """Todas as obras, cada uma com seus capítulos em ordem numérica, os números que faltam e a cor da linha."""
     grupos: Dict[str, Dict[str, Any]] = {}
     for c in _varrer(Path(raiz)):
@@ -86,6 +103,7 @@ def listar(raiz: Path) -> Dict[str, Any]:
 
 # ----------------------------------------------------------------------------- versão (sincronização)
 
+_trava_listar = threading.Lock()
 _cache_versao: Dict[str, Any] = {"raiz": None, "quando": 0.0, "valor": ""}
 _trava_versao = threading.Lock()
 
@@ -407,21 +425,20 @@ def excluir_obra(raiz: Path, nome: str) -> Dict[str, Any]:
             raise ErroBaixador("Uma das pastas da obra está fora da biblioteca. Nada foi apagado.")
         if c["antigo"] and any(listar_imagens_em(sub) for sub in _subpastas(c["pasta"])):
             raise ErroBaixador(f"A pasta “{c['rel']}” também guarda outros capítulos em subpastas. Nada foi apagado.")
-    pais = set()
-    for c in caps:
-        _apagar_arvore(c["pasta"])
-        if not c["antigo"]:
-            pais.add(c["pasta"].parent)
-    for pai in pais:                                      # sobrou só capa/obra.json/pastas vazias? então a pasta da obra também some
+    pastas = {c["pasta"] for c in caps}
+    extras: List[Path] = []
+    for pai in {c["pasta"].parent for c in caps if not c["antigo"]}:   # sobra só capa/obra.json/pastas vazias? então eles vão junto (a obra volta inteira)
         if pai == raiz or not pai.is_dir() or not _dentro(raiz, pai):
             continue
-        if _varrer_pasta_tem_capitulos(pai):
-            continue
-        restos = [e for e in pai.iterdir() if not (e.is_dir() and not any(e.iterdir()))]
-        if all(e.name == "obra.json" or e.name.startswith(".") or (e.stem.lower() == "capa") for e in restos):
-            _apagar_arvore(pai)
+        restos = [e for e in pai.iterdir() if e not in pastas and not (e.is_dir() and not any(e.iterdir()))]
+        if all(e.is_file() and (e.name == "obra.json" or e.stem.lower() == "capa") for e in restos) and not any(_varrer_pasta_tem_capitulos(e) for e in restos if e.is_dir()):
+            extras += restos
+    id_ = lixeira.enviar(raiz, sorted(pastas), nome, "obra", extras)     # vai para a lixeira (14 dias), não é apagada
+    for pai in {c["pasta"].parent for c in caps if not c["antigo"]}:
+        if pai != raiz and pai.is_dir() and _dentro(raiz, pai) and not any(f.is_file() for f in pai.rglob("*")):
+            _apagar_arvore(pai)                           # pasta da obra sem nenhum arquivo: só casca vazia
     esquecer_versao()
-    return {"capitulos": len(caps), "pastas": sorted({c["rel"] for c in caps})}
+    return {"capitulos": len(caps), "pastas": sorted({c["rel"] for c in caps}), "lixeira": id_}
 
 
 def excluir_capitulos(raiz: Path, obra: str, rels: List[str]) -> Dict[str, Any]:
@@ -450,15 +467,14 @@ def excluir_capitulos(raiz: Path, obra: str, rels: List[str]) -> Dict[str, Any]:
             raise ErroBaixador(f"A pasta “{c['rel']}” também guarda outros capítulos em subpastas. Nada foi apagado.")
     apagados: List[str] = []
     erros: List[str] = []
-    for c in alvos:
-        try:
-            _apagar_arvore(c["pasta"])
-            apagados.append(c["rel"])
-        except OSError as erro:
-            erros.append(f"{c['rel']}: {erro}")
-    lidos.esquecer(apagados)
+    try:
+        id_ = lixeira.enviar(raiz, [c["pasta"] for c in alvos], alvos[0]["obra"] or obra, "capitulos")   # lixeira: dá para restaurar em 14 dias
+        apagados = [c["rel"] for c in alvos]
+    except OSError as erro:
+        id_ = None
+        erros.append(str(erro))
     esquecer_versao()
-    return {"apagados": apagados, "erros": erros}
+    return {"apagados": apagados, "erros": erros, "lixeira": id_}
 
 
 def listar_imagens_em(pasta: Path) -> List[str]:
@@ -486,7 +502,9 @@ def excluir_tudo(raiz: Path) -> Dict[str, Any]:
             continue
         itens = list(pasta.iterdir())
         if all(e.name == dados_obra.NOME_ARQUIVO or e.stem.lower() == "capa" or e.name.startswith(".") or (e.is_dir() and not any(e.iterdir())) for e in itens):
-            _apagar_arvore(pasta)
+            lixeira.enviar(raiz, [], pasta.name, "obra", [e for e in itens if e.is_file() and not e.name.startswith(".")])
+            if not any(f.is_file() for f in pasta.rglob("*") if not f.name.startswith(".")):
+                _apagar_arvore(pasta)
             sobras += 1
     esquecer_versao()
     return {"obras": len(nomes), "capitulos": capitulos, "pastas_vazias": sobras}

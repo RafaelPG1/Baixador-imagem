@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any, Deque, Dict, List, Optional, Tuple
 
 from baixador import configuracao
-from baixador.nucleo import ambiente
+from baixador.nucleo import ambiente, energia
 from baixador.nucleo.erros import ErroBaixador
 from baixador.traducao import config
 
@@ -169,7 +169,7 @@ class TarefaTraducao:
     """Uma tradução (um ou vários capítulos, em sequência) por vez, em thread própria, com andamento para a interface."""
 
     def __init__(self) -> None:
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()                     # reentrante: salvar a fila é chamado de dentro de trechos já travados
         self._thread: Optional[threading.Thread] = None
         self._parar = threading.Event()
         self._parar_item = threading.Event()
@@ -192,6 +192,9 @@ class TarefaTraducao:
         self._cfg: Dict[str, Any] = {}  # configuração da última tarefa (motor/modelo): a nova tentativa reaproveita
         self._pastas: List[Path] = []   # pasta de cada item de `itens` (mesmo índice)
         self._fechada = True            # a fila já terminou de ser percorrida: não aceita mais itens
+        self._arquivo_fila: Optional[Path] = None   # `dados/fila.json`: o que falta traduzir sobrevive ao fechar o programa
+        self._fila_salva: Optional[str] = None
+        self._duracoes: Dict[str, List[float]] = {}  # segundos por capítulo, por motor (estimativa de término)
 
     # -- início
     def iniciar(self, pasta: Path, cfg: Optional[Dict[str, Any]] = None) -> None:
@@ -210,16 +213,20 @@ class TarefaTraducao:
             self.modo, self.avisos = cfg["motor"], []
             self.prontos, self.capitulos, self.aguardando = 0, len(pastas), 0
             lista = [Path(p) for p in pastas]
+            novos = {f"{p.parent.name}/{p.name}" for p in lista}
+            guardados = [(it, p) for it, p in zip(self.itens, self._pastas) if it["estado"] == "interrompido" and it["rel"] not in novos]   # fila recuperada ao abrir não se perde
             self.itens = [
                 {"nome": self._nome_item(p), "rel": f"{p.parent.name}/{p.name}", "estado": "fila", "etapa": "", "feitas": 0, "total": ESCALA}
                 for p in lista
-            ]
+            ] + [it for it, _ in guardados]
+            lista += [p for _, p in guardados]
             self.inicio, self.fim = time.time(), 0.0
             self.erro, self.resumo, self.pasta = None, None, lista[0]
             self._cfg, self._pastas, self._fechada = cfg, lista, False
             self._parar, self._parar_item, self._pulados = threading.Event(), threading.Event(), set()
             self._thread = threading.Thread(target=self._rodar, args=(lista, cfg), daemon=True)   # `lista` é a mesma de `_pastas`: pode crescer
             self._thread.start()
+            self._salvar_fila()
 
     @staticmethod
     def _rel(pasta: Path) -> str:
@@ -262,6 +269,21 @@ class TarefaTraducao:
             n += 1
         return n
 
+    def _arrancar(self, cfg: Dict[str, Any]) -> None:
+        """(sob a trava, sem tarefa rodando) Começa a thread sobre os itens que já estão na lista, sem recriá-la."""
+        vivos = [it for it in self.itens if not it.get("oculto") and it["estado"] not in ("cancelado", "refeito")]
+        self.estado, self.log, self.feitas, self.total, self.modo, self.avisos = "executando", [], 0, ESCALA, cfg["motor"], []
+        self.prontos = sum(it["estado"] == "pronto" for it in vivos)
+        self.aguardando = sum(it["estado"] == "aguardando" for it in vivos)
+        self.capitulos = sum(it["estado"] not in ("aguardando", "interrompido") for it in vivos)
+        self.inicio, self.fim, self.erro, self.resumo = time.time(), 0.0, None, None
+        self.pasta = next((self._pastas[k] for k, it in enumerate(self.itens) if it["estado"] == "fila"), self._pastas[0])
+        self._cfg, self._fechada = cfg, False
+        self._parar, self._parar_item, self._pulados = threading.Event(), threading.Event(), set()
+        self._thread = threading.Thread(target=self._rodar, args=(self._pastas, cfg), daemon=True)   # `_pastas` é a mesma lista dos itens: pode crescer
+        self._thread.start()
+        self._salvar_fila()
+
     def iniciar_ou_enfileirar_web(self, pastas: List[Path], importado: bool = True) -> int:
         """Motor web: põe capítulos na fila da tarefa web, sempre no registro que já existe (sem duplicar). Com uma preparação web em
         andamento, entram na fila dela (importados furam a fila, depois do capítulo que está sendo preparado agora, que nunca é
@@ -271,29 +293,133 @@ class TarefaTraducao:
                 if self._cfg.get("motor") != "web" or self._fechada or self._parar.is_set():
                     raise RuntimeError("Já existe uma tradução em andamento.")
                 self._colocar_web(pastas, importado)
+                self._salvar_fila()
                 return len(pastas)
-            if not self._colocar_web(pastas, importado):
+            if self._colocar_web(pastas, importado):
+                self._arrancar({**config.ler(), "motor": "web"})
+        return len(pastas)
+
+    def adicionar(self, pastas: List[Path], cfg: Optional[Dict[str, Any]] = None) -> int:
+        """Pedir mais capítulos com uma tradução (mesmo motor) em andamento: entram no fim da fila dela, sem interromper nada nem repetir quem
+        já está lá. Sem tarefa rodando, começa uma nova (só os itens "aguardando"/"interrompido" da anterior continuam na lista).
+        Motor diferente do que está rodando: RuntimeError."""
+        cfg = dict(cfg) if cfg else config.ler()
+        with self._lock:
+            if self.estado == "executando":
+                if self._cfg.get("motor") != cfg["motor"] or self._fechada or self._parar.is_set():
+                    raise RuntimeError("Já existe uma tradução em andamento.")
+                self._colocar_web(pastas, False)
+                self._salvar_fila()
                 return len(pastas)
-            vivos = [it for it in self.itens if not it.get("oculto") and it["estado"] not in ("cancelado", "refeito")]
-            self.estado, self.log, self.feitas, self.total, self.modo, self.avisos = "executando", [], 0, ESCALA, "web", []
-            self.prontos = sum(it["estado"] == "pronto" for it in vivos)
-            self.aguardando = sum(it["estado"] == "aguardando" for it in vivos)
-            self.capitulos = sum(it["estado"] != "aguardando" for it in vivos)
-            self.inicio, self.fim, self.erro, self.resumo = time.time(), 0.0, None, None
-            self.pasta = next((self._pastas[k] for k, it in enumerate(self.itens) if it["estado"] == "fila"), self._pastas[0])
-            self._cfg, self._fechada = {**config.ler(), "motor": "web"}, False
-            self._parar, self._parar_item = threading.Event(), threading.Event()
-            self._thread = threading.Thread(target=self._rodar, args=(self._pastas, self._cfg), daemon=True)   # `_pastas` é a mesma lista dos itens: pode crescer
-            self._thread.start()
+            if not pastas:
+                raise ErroTraducao("Nenhum conjunto para traduzir.")
+            if cfg["motor"] != "web":
+                manter = [k for k, it in enumerate(self.itens) if it["estado"] in ("aguardando", "interrompido")]
+                self.itens, self._pastas = [self.itens[k] for k in manter], [self._pastas[k] for k in manter]
+            if self._colocar_web(pastas, False):
+                self._arrancar(cfg)
         return len(pastas)
 
     def preparar_web(self, pastas: List[Path]) -> int:
         """Preparar textos para a IA web: capítulos novos entram na preparação existente (ou começam uma), sem refazer os já preparados."""
         return self.iniciar_ou_enfileirar_web(pastas, importado=False)
 
+    def rels_ativos(self) -> set:
+        """Capítulos que a tarefa está processando ou vai processar (fila/traduzindo): só estes não podem ser apagados agora."""
+        with self._lock:
+            return {it["rel"] for it in self.itens if self.estado == "executando" and it["estado"] in ("fila", "traduzindo")}
+
     def rels_em_preparacao(self) -> set:
         with self._lock:
-            return {it["rel"] for it in self.itens if not it.get("oculto") and it["estado"] in ("fila", "traduzindo", "aguardando")}
+            return {it["rel"] for it in self.itens if not it.get("oculto") and it["estado"] in ("fila", "traduzindo", "aguardando", "interrompido")}
+
+    # -- fila persistente (`dados/fila.json`)
+    def usar_arquivo_fila(self, arquivo: Path, raiz: Path) -> int:
+        """Liga a persistência e recupera o que a execução anterior deixou: capítulos que estavam na fila ou sendo traduzidos viram
+        "interrompido" (nada roda sozinho; a pessoa escolhe retomar ou remover). Devolve quantos voltaram."""
+        self._arquivo_fila = Path(arquivo)
+        try:
+            self._duracoes = {k: [float(x) for x in v][-30:] for k, v in json.loads(self._arquivo_fila.with_name("historico_traducao.json").read_text(encoding="utf-8")).items()}
+        except (OSError, ValueError, TypeError, AttributeError):
+            self._duracoes = {}
+        try:
+            dados = json.loads(self._arquivo_fila.read_text(encoding="utf-8"))
+            itens = dados["itens"]
+            motor = dados["motor"] if dados.get("motor") in config.MOTORES else config.MOTOR_PADRAO
+            modelo = dados["modelo"] if dados.get("modelo") in config.MODELOS else config.MODELO_PADRAO
+        except (OSError, ValueError, KeyError, TypeError):
+            return 0
+        n = 0
+        with self._lock:
+            if self.estado == "executando":
+                return 0
+            ja = {it["rel"] for it in self.itens if it["estado"] in ("fila", "traduzindo", "interrompido")}
+            for r in itens if isinstance(itens, list) else []:
+                rel = str(r.get("rel", "")) if isinstance(r, dict) else ""
+                pasta = Path(raiz) / rel
+                if not rel or rel in ja or ".." in Path(rel).parts or not pasta.is_dir():
+                    continue
+                ja.add(rel)
+                self.itens.append({"nome": self._nome_item(pasta), "rel": rel, "estado": "interrompido", "etapa": "Interrompido ao fechar o programa", "feitas": 0, "total": ESCALA})
+                self._pastas.append(pasta)
+                n += 1
+            if n:
+                self._cfg, self.modo = {"motor": motor, "modelo": modelo}, motor
+            self._fila_salva = self._instantaneo_da_fila()
+        return n
+
+    def _instantaneo_da_fila(self) -> str:
+        pend = [{"rel": it["rel"]} for it in self.itens if not it.get("oculto") and it["estado"] in ("fila", "traduzindo", "interrompido")]
+        return json.dumps({"versao": 1, "motor": self._cfg.get("motor") or self.modo or config.MOTOR_PADRAO, "modelo": self._cfg.get("modelo") or config.MODELO_PADRAO, "itens": pend} if pend else {}, ensure_ascii=False)
+
+    def _salvar_fila(self) -> None:
+        """Grava o que falta fazer, só quando mudou (andamento de uma fala não grava nada). Falha ao gravar nunca derruba a tradução."""
+        if self._arquivo_fila is None:
+            return
+        with self._lock:
+            conteudo = self._instantaneo_da_fila()
+            if conteudo == self._fila_salva:
+                return
+            try:
+                if conteudo == "{}":
+                    self._arquivo_fila.unlink(missing_ok=True)
+                else:
+                    self._arquivo_fila.parent.mkdir(parents=True, exist_ok=True)
+                    tmp = self._arquivo_fila.with_suffix(".tmp")
+                    tmp.write_text(conteudo, encoding="utf-8")
+                    os.replace(tmp, self._arquivo_fila)
+                self._fila_salva = conteudo
+            except OSError:
+                pass
+
+    def retomar(self, rels: Any = None) -> int:
+        """Põe de volta na fila os capítulos "interrompido" (todos, ou só os `rels`). Com tradução rodando, só do mesmo motor. Devolve quantos."""
+        with self._lock:
+            alvo = [k for k, it in enumerate(self.itens) if it["estado"] == "interrompido" and (not rels or it["rel"] in rels)]
+            if not alvo:
+                return 0
+            cfg = {**config.ler(), **{k: v for k, v in self._cfg.items() if k in ("motor", "modelo")}} if self._cfg else config.ler()
+            if self.estado == "executando":
+                if self._cfg.get("motor") != cfg["motor"] or self._fechada or self._parar.is_set():
+                    raise RuntimeError("Já existe uma tradução em andamento.")
+            for k in alvo:
+                self.itens[k].update(estado="fila", etapa="", feitas=0)
+                self._pulados.discard(k)
+                self.capitulos += 1
+            if self.estado != "executando":
+                self._arrancar(cfg)
+            else:
+                self._salvar_fila()
+            return len(alvo)
+
+    def remover_interrompido(self, rel: str) -> bool:
+        with self._lock:
+            for it in self.itens:
+                if it["rel"] == rel and it["estado"] == "interrompido":
+                    it.update(estado="cancelado", oculto=True)       # só esconde: o índice da lista não muda
+                    self._salvar_fila()
+                    return True
+        return False
 
     @staticmethod
     def _nome_item(pasta: Path) -> str:
@@ -316,6 +442,7 @@ class TarefaTraducao:
                     it["estado"] = "cancelado"
                     self._pulados.add(k)
                     self.capitulos = max(0, self.capitulos - 1)
+                    self._salvar_fila()
                     return "fila"
                 if it["estado"] == "traduzindo" and len(self.itens) > 1:
                     self._parar_item.set()
@@ -387,15 +514,17 @@ class TarefaTraducao:
         with self._lock:
             if 0 <= indice < len(self.itens):
                 self.itens[indice].update(campos)
+                if "estado" in campos:
+                    self._salvar_fila()
 
     def _atualizar_global(self, indice: int, fracao: float) -> None:
         with self._lock:
-            ativos = [i for i in self.itens if i["estado"] not in ("cancelado", "refeito")]
+            ativos = [i for i in self.itens if i["estado"] not in ("cancelado", "refeito", "interrompido")]
             if not ativos:
                 return
             soma = 0.0
             for k, it in enumerate(self.itens):
-                if it["estado"] in ("cancelado", "refeito"):
+                if it["estado"] in ("cancelado", "refeito", "interrompido"):
                     continue
                 soma += 1.0 if it["estado"] in ("pronto", "falhou", "aguardando") else (fracao if k == indice else it["feitas"] / ESCALA)
             self.feitas = int(ESCALA * soma / len(ativos))
@@ -407,6 +536,7 @@ class TarefaTraducao:
                 if it["estado"] in ("fila", "traduzindo"):
                     it["estado"] = pendente
             self.fim = time.time()
+            self._salvar_fila()
 
     def _liberar(self, pasta: Path) -> None:
         """Capítulo traduzido e salvo: a biblioteca (notebook e celular) passa a vê-lo agora, sem esperar o resto do lote."""
@@ -420,6 +550,37 @@ class TarefaTraducao:
 
     # -- execução
     def _rodar(self, pastas: List[Path], cfg: Dict[str, Any]) -> None:
+        with energia.acordado():                                 # o notebook não suspende no meio da fila (e volta ao normal ao terminar/falhar)
+            self._rodar_fila(pastas, cfg)
+
+    def _registrar_duracao(self, motor: str, segundos: float) -> None:
+        with self._lock:
+            historico = self._duracoes.setdefault(motor, [])
+            historico.append(round(segundos, 1))
+            del historico[:-30]
+            if self._arquivo_fila is not None:
+                try:
+                    alvo = self._arquivo_fila.with_name("historico_traducao.json")
+                    alvo.parent.mkdir(parents=True, exist_ok=True)
+                    tmp = alvo.with_suffix(".tmp")
+                    tmp.write_text(json.dumps(self._duracoes), encoding="utf-8")
+                    os.replace(tmp, alvo)
+                except OSError:
+                    pass
+
+    def _estimativa(self) -> Optional[int]:
+        """Segundos restantes estimados (mediana dos últimos capítulos deste motor × o que falta). Só uma estimativa; None sem histórico."""
+        if self.estado != "executando" or self._parar.is_set():
+            return None
+        historico = sorted(self._duracoes.get(self.modo) or [])
+        if not historico:
+            return None
+        mediana = historico[len(historico) // 2]
+        faltam = sum(it["estado"] == "fila" for it in self.itens)
+        atual = next((it for it in self.itens if it["estado"] == "traduzindo"), None)
+        return round(mediana * (faltam + ((1 - min(1.0, atual["feitas"] / max(1, atual["total"]))) if atual else 0)))
+
+    def _rodar_fila(self, pastas: List[Path], cfg: Dict[str, Any]) -> None:
         falas = revisar = erros = 0
         falhas: List[Dict[str, str]] = []
         try:
@@ -445,7 +606,10 @@ class TarefaTraducao:
                     self._parar_item.clear()
                 self._registrar(f"== {pasta.name} ==")
                 self._item(indice, estado="traduzindo", etapa="Preparando")
+                t0 = time.time()
                 desfecho, dados = self._capitulo(indice, pasta, env)
+                if desfecho in ("pronto", "aguardando"):
+                    self._registrar_duracao(cfg["motor"], time.time() - t0)
                 if desfecho == "cancelado":
                     if self._parar.is_set():
                         raise ErroTraducao("Tradução cancelada.")
@@ -586,7 +750,7 @@ class TarefaTraducao:
                 "estado": self.estado, "erro": self.erro, "feitas": self.feitas, "total": self.total,
                 "log": self.log[desde_log:], "log_total": len(self.log), "resumo": self.resumo,
                 "prontos": self.prontos, "capitulos": self.capitulos, "aguardando": self.aguardando, "modo": self.modo,
-                "cancelando": self.estado == "executando" and self._parar.is_set(), "avisos": list(self.avisos),
+                "cancelando": self.estado == "executando" and self._parar.is_set(), "avisos": list(self.avisos), "eta": self._estimativa(),
                 "itens": [dict(i) for i in self.itens if not i.get("oculto")], "inicio": self.inicio, "fim": self.fim, "agora": time.time(),
                 "dependencias": disponibilidade(),
             }

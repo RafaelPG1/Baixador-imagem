@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gzip
 import sys
 from http.server import ThreadingHTTPServer
 from pathlib import Path
@@ -37,6 +38,24 @@ TIPOS_IMAGEM = {
 def ler_web(relativo: str) -> bytes:
     """Lê um arquivo de `web/` (levanta OSError se não existir)."""
     return (WEB / relativo).read_bytes()
+
+
+_CACHE_WEB: dict = {}
+
+
+def web_em_cache(relativo: str) -> Tuple[bytes, bytes, str]:
+    """(bytes, bytes em gzip, etag) de um arquivo de `web/`. Fica na memória e só é refeito se o arquivo mudar: a interface carrega ~250 KB
+    de JS/CSS a cada abertura (por Tailscale, no celular), e antes tudo era relido do disco e reenviado inteiro, sem validador."""
+    arquivo = WEB / relativo
+    st = arquivo.stat()
+    chave = (st.st_mtime_ns, st.st_size)
+    guardado = _CACHE_WEB.get(relativo)
+    if guardado and guardado[0] == chave:
+        return guardado[1]
+    corpo = arquivo.read_bytes()
+    valor = (corpo, gzip.compress(corpo, 6, mtime=0), f'"{st.st_mtime_ns:x}-{st.st_size:x}"')
+    _CACHE_WEB[relativo] = (chave, valor)
+    return valor
 
 
 def ler_capa(raiz: Path, pasta: str) -> Optional[Tuple[bytes, str]]:

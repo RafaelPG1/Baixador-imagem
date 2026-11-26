@@ -1,6 +1,5 @@
 """Traduções importadas furam a fila de preparação do lote, sem interromper o capítulo que está sendo preparado."""
 import threading
-import time
 import unittest
 from pathlib import Path
 from unittest import mock

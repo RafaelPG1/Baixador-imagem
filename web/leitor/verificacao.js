@@ -79,6 +79,32 @@
     opcao('v-regioes', 'Regiões lidas pelo OCR', 'v-sem-regioes', true),
     (function () { var l = el('label'); l.append(marcadas, document.createTextNode(' Só falas a revisar ou com erro')); return l; })()
   );
+  /* Edição manual da tradução: o servidor grava em edicoes.json (sobrevive a reprocessar) e no traducao.json; ids e posições não mudam. */
+  var sujo = false;
+  function editor(f, li, t) {
+    var wrap = el('div', { className: 'v-edit' });
+    var abrirB = el('button', { type: 'button', textContent: 'Editar', className: 'v-edit-b' });
+    var area = el('textarea', { rows: 3, hidden: true, className: 'v-edit-t', value: f.texto || '' });
+    var salvar = el('button', { type: 'button', textContent: 'Salvar', hidden: true }), cancelar = el('button', { type: 'button', textContent: 'Cancelar', hidden: true });
+    var msg = el('small', { className: 'v-edit-m', role: 'status' });
+    function modo(editando) { area.hidden = salvar.hidden = cancelar.hidden = !editando; abrirB.hidden = editando; if (editando) { area.value = f.texto || ''; area.focus(); } }
+    wrap.addEventListener('click', function (e) { e.stopPropagation(); });
+    abrirB.addEventListener('click', function () { msg.textContent = ''; modo(true); });
+    cancelar.addEventListener('click', function () { modo(false); });
+    salvar.addEventListener('click', function () {
+      var novo = area.value.replace(/\s+/g, ' ').trim(); if (!novo) { msg.textContent = 'Escreva a tradução.'; return; }
+      var ed = {}; ed[f.id] = novo; salvar.disabled = true;
+      fetch(L.api('/api/falas/editar'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rel: d.rel, edicoes: ed }) })
+        .then(function (r) { return r.json().then(function (j) { return r.ok ? j : Promise.reject(new Error(j.erro || ('Erro ' + r.status))); }); })
+        .then(function (j) {
+          if (j.alteradas.length) { f.texto = novo; f.estado = 'ok'; f.status = 'ok'; f.erro = null; t.textContent = novo; li.className = 'v-ok v-sel'; sujo = true; msg.textContent = 'Salvo. A imagem atualiza ao fechar este painel.'; }
+          else msg.textContent = (j.ignoradas[0] || {}).motivo || 'Nada mudou.';
+          modo(false);
+        }).catch(function (e) { msg.textContent = e.message; }).then(function () { salvar.disabled = false; });
+    });
+    wrap.append(abrirB, area, el('div', { className: 'v-edit-a' }), msg); wrap.querySelector('.v-edit-a').append(salvar, cancelar);
+    return wrap;
+  }
   var lista = el('ol', { className: 'v-lista' });
   var itens = {};
   d.imagens.forEach(function (im) {
@@ -90,6 +116,7 @@
       var t = el('div', { className: 'v-l-trad', textContent: f.texto || (f.erro ? '(sem tradução)' : '—') });
       li.append(linha, o, t, el('small', { textContent: info(f).split(' · ').slice(1).join(' · ') }));
       li.addEventListener('click', function () { escolher(f.id, true); });
+      if (d.traduzido && f.status !== 'copiado') li.append(editor(f, li, t));
       lista.appendChild(li);
     });
   });
@@ -98,7 +125,7 @@
   painel.append(cab, resumo, avisos, opcoes, lista);
   document.body.append(botao, painel);
 
-  function abrir(sim) { painel.hidden = !sim; botao.setAttribute('aria-expanded', String(sim)); document.body.classList.toggle('v-aberto', sim); }
+  function abrir(sim) { if (!sim && sujo) { location.reload(); return; } painel.hidden = !sim; botao.setAttribute('aria-expanded', String(sim)); document.body.classList.toggle('v-aberto', sim); }
   botao.addEventListener('click', function () { abrir(painel.hidden); });
   fechar.addEventListener('click', function () { abrir(false); });
   document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && !painel.hidden) abrir(false); });

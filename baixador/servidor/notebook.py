@@ -27,11 +27,11 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 from baixador.biblioteca import acervo as biblioteca
-from baixador.traducao import config, executor, legado, web_ia
+from baixador.traducao import config, edicoes, executor, legado, web_ia
 from baixador.navegador import navegadores
-from baixador.biblioteca import capa as capa_obra, estrutura, exportar, lidos, obra as dados_obra, organizacao
+from baixador.biblioteca import armazenamento, capa as capa_obra, busca, estrutura, exportar, historico, lidos, lixeira, obra as dados_obra, organizacao
 from baixador.servidor.base import (
-    CSS, ESTATICOS_LEITOR, ESTATICOS_VERIFICACAO, JS, ServidorSilencioso, ler_capa, ler_web, pagina_leitor,
+    CSS, ESTATICOS_LEITOR, ESTATICOS_VERIFICACAO, JS, ServidorSilencioso, ler_capa, ler_web, pagina_leitor, web_em_cache,
 )
 from baixador.servidor import celular as celular_servidor
 from baixador.servidor.celular import ControleCelular
@@ -52,6 +52,8 @@ ESTATICOS = {
     "/estatico/baixar.js": ("notebook/baixar.js", JS),
     "/estatico/traducoes.js": ("notebook/traducoes.js", JS),
     "/estatico/webia.js": ("notebook/webia.js", JS),
+    "/estatico/busca.js": ("notebook/busca.js", JS),
+    "/estatico/armazenamento.js": ("notebook/armazenamento.js", JS),
     "/estatico/biblioteca.js": ("notebook/biblioteca.js", JS),
     "/estatico/celular.js": ("notebook/celular.js", JS),
     **ESTATICOS_LEITOR,
@@ -252,9 +254,19 @@ class Manipulador(BaseHTTPRequestHandler):
                 return self._negar()
             nome, tipo = ESTATICOS[partes.path]
             try:
-                return self._enviar(200, tipo, ler_web(nome), cache="no-cache")
+                corpo, comprimido, etag = web_em_cache(nome)
             except OSError:
                 return self._negar(404, "Arquivo da interface não encontrado.")
+            extras = {"ETag": etag, "Vary": "Accept-Encoding"}
+            if etag in self.headers.get("If-None-Match", ""):        # o navegador já tem esta versão: nada é reenviado
+                self.send_response(304)
+                for k, v in {**extras, "Cache-Control": "no-cache"}.items():
+                    self.send_header(k, v)
+                self.end_headers()
+                return
+            if "gzip" in self.headers.get("Accept-Encoding", "") and not tipo.startswith(("image/", "font/")):
+                corpo, extras["Content-Encoding"] = comprimido, "gzip"
+            return self._enviar(200, tipo, corpo, cache="no-cache", extras=extras)
         if not self._autorizado(consulta, metodo_post=False):
             return self._negar()
         caminho = partes.path
@@ -315,6 +327,28 @@ class Manipulador(BaseHTTPRequestHandler):
         if caminho == "/api/versao":
             return self._json(200, {"versao": biblioteca.versao(raiz) if raiz.is_dir() else ""})
 
+        if caminho == "/api/lixeira":
+            lixeira.limpar_vencidos(raiz)
+            return self._json(200, {"itens": lixeira.listar(raiz), "dias": lixeira.DIAS})
+
+        if caminho == "/api/armazenamento/tamanhos":
+            return self._json(200, armazenamento.tamanhos(raiz) if raiz.is_dir() else {"obras": {}, "lixeira": 0, "total": 0})
+
+        if caminho == "/api/busca":                              # pesquisa no texto traduzido (FTS5); só atualiza o índice do que mudou
+            q = (consulta.get("q") or [""])[0][:200]
+            obra = (consulta.get("obra") or [""])[0] or None
+            if len(q.strip()) < 2:
+                return self._json(200, {"resultados": []})
+            caps = busca.todos(raiz)
+            busca.sincronizar(raiz, caps)
+            res = busca.pesquisar(q, obra)
+            nomes = {c["rel"]: c.get("rotulo") for c in caps}
+            return self._json(200, {"resultados": [{**r, "rotulo": nomes.get(r["rel"]) or r["rel"]} for r in res]})
+        if caminho == "/api/historico":
+            return self._json(200, historico.resumo())
+        if caminho == "/api/armazenamento":
+            return self._json(200, {**armazenamento.tamanhos(raiz), "orfaos": armazenamento.orfaos(raiz, self._rels_protegidos())})
+
         if caminho == "/api/celular/estado":
             return self._json(200, self.server.celular.estado())  # type: ignore[attr-defined]
 
@@ -364,7 +398,7 @@ class Manipulador(BaseHTTPRequestHandler):
             tamanho = int(self.headers.get("Content-Length", "0"))
         except ValueError:
             return self._negar(400, "Requisição inválida.")
-        if not 0 <= tamanho <= (web_ia.MAX_IMPORTACAO if partes.path == "/api/web/importar" else MAX_CORPO):
+        if not 0 <= tamanho <= (web_ia.MAX_IMPORTACAO if partes.path in ("/api/web/importar", "/api/web/revisao/importar") else MAX_CORPO):
             return self._negar(413, "Requisição grande demais.")
         self.close_connection = False
         try:
@@ -382,7 +416,23 @@ class Manipulador(BaseHTTPRequestHandler):
             rel = dados.get("rel")
             if not isinstance(rel, str) or pasta_do_capitulo(raiz, rel) is None:
                 return self._negar(400, "Capítulo inválido.")
-            lidos.marcar(rel.strip("/\\").replace("\\", "/"), bool(dados.get("lido", True)))
+            rel = rel.strip("/\\").replace("\\", "/")
+            lidos.marcar(rel, bool(dados.get("lido", True)))
+            historico.marcar_lido(rel, bool(dados.get("lido", True)))
+            return self._json(200, {"ok": True})
+
+        if caminho == "/api/historico/posicao":                # onde a pessoa parou no capítulo (o leitor manda de tempos em tempos)
+            rel = dados.get("rel")
+            if not isinstance(rel, str) or pasta_do_capitulo(raiz, rel) is None:
+                return self._negar(400, "Capítulo inválido.")
+            gravou = historico.salvar_posicao(rel.strip("/\\").replace("\\", "/"), dados.get("p"), dados.get("n"), dados.get("f"), dados.get("t"))
+            return self._json(200, {"ok": True, "gravou": gravou})
+
+        if caminho == "/api/historico/estado":                 # quero ler / lendo / concluída (da OBRA)
+            obra, estado = str(dados.get("obra", "")), str(dados.get("estado", ""))
+            if not obra or "/" in obra or obra.startswith(".") or not (raiz / obra).is_dir() or estado not in historico.ESTADOS:
+                return self._negar(400, "Obra ou estado inválido.")
+            historico.definir_estado(obra, estado, dados.get("t"))
             return self._json(200, {"ok": True})
 
         if caminho == "/api/traduzir":
@@ -396,9 +446,9 @@ class Manipulador(BaseHTTPRequestHandler):
             return self._json(200, {**nova, "motores": config.MOTORES, "modelos": config.MODELOS, "idiomas": executor.IDIOMAS})
 
         if caminho == "/api/traducao/excluir":
-            if self.server.traducao.estado == "executando":  # type: ignore[attr-defined]
-                return self._negar(409, "Há uma tradução em andamento. Espere terminar ou cancele antes de excluir traduções.")
             obra, rel = str(dados.get("obra", ""))[:120], str(dados.get("rel", ""))[:300]
+            if self._em_uso(obra, [rel] if rel else None):
+                return self._negar(409, "Este capítulo está sendo traduzido agora (ou espera na fila). Cancele-o na aba Traduções antes de excluir.")
             if not obra and not rel:
                 return self._negar(400, "Informe o capítulo ou a obra.")
             alvos = [
@@ -430,6 +480,18 @@ class Manipulador(BaseHTTPRequestHandler):
                 return self._negar(409, "Esse capítulo não está mais na fila (ou use Cancelar para parar tudo).")
             return self._json(200, {"ok": True, "onde": r})
 
+        if caminho == "/api/traducao/retomar":                  # fila que sobrou de quando o programa foi fechado
+            try:
+                n = self.server.traducao.retomar([str(dados["rel"])[:300]] if dados.get("rel") else None)  # type: ignore[attr-defined]
+            except RuntimeError as erro:
+                return self._negar(409, str(erro))
+            return self._json(200, {"ok": True, "retomados": n}) if n else self._negar(409, "Não há capítulo interrompido para retomar.")
+
+        if caminho == "/api/traducao/remover":
+            if not self.server.traducao.remover_interrompido(str(dados.get("rel") or "")[:300]):  # type: ignore[attr-defined]
+                return self._negar(409, "Esse capítulo não está interrompido.")
+            return self._json(200, {"ok": True})
+
         if caminho == "/api/traducao/tentar-novamente":        # refaz o que terminou cancelado ou com erro (um capítulo ou todos)
             try:
                 n = self.server.traducao.tentar_novamente(str(dados.get("rel") or "")[:300])  # type: ignore[attr-defined]
@@ -446,6 +508,20 @@ class Manipulador(BaseHTTPRequestHandler):
             except ErroTraducao as erro:
                 return self._negar(400, str(erro))
             return self._json(200, {"ok": True, "removidos": n})
+
+        if caminho == "/api/falas/editar":                       # edição manual de falas traduzidas: {rel, edicoes: {id: texto}}
+            rel, mud = str(dados.get("rel", "")), dados.get("edicoes")
+            obra, _, cap = rel.partition("/")
+            pasta = self.server.raiz / obra / cap  # type: ignore[attr-defined]
+            if not isinstance(mud, dict) or not obra or not cap or "/" in cap or ".." in rel or obra.startswith(".") or not pasta.is_dir():
+                return self._negar(400, "Capítulo ou edições inválidos.")
+            try:
+                r = edicoes.aplicar(pasta, {str(k)[:40]: v for k, v in list(mud.items())[:2000]})
+            except ErroBaixador as erro:
+                return self._negar(404, str(erro))
+            if r["alteradas"]:
+                biblioteca.esquecer_versao()
+            return self._json(200, {"ok": True, **r})
 
         if caminho.startswith("/api/web/"):                      # tradução com IA na web (manual)
             return self._web_ia(caminho[len("/api/web/"):], dados)
@@ -477,9 +553,29 @@ class Manipulador(BaseHTTPRequestHandler):
                 return self._negar(500, f"Não foi possível mover as pastas: {erro}")
             return self._json(200, {"ok": True, "capitulos": n})
 
+        if caminho in ("/api/lixeira/restaurar", "/api/lixeira/apagar", "/api/lixeira/esvaziar"):
+            try:
+                if caminho.endswith("restaurar"):
+                    r = lixeira.restaurar(raiz, str(dados.get("id", ""))[:80])
+                    biblioteca.esquecer_versao()
+                    return self._json(200, {"ok": True, **r})
+                if caminho.endswith("apagar"):
+                    lixeira.apagar(raiz, str(dados.get("id", ""))[:80])
+                    return self._json(200, {"ok": True})
+                return self._json(200, {"ok": True, "apagados": lixeira.esvaziar(raiz)})
+            except ErroBaixador as erro:
+                return self._negar(422, str(erro))
+            except OSError as erro:
+                return self._negar(500, f"Não foi possível concluir: {erro}")
+
+        if caminho == "/api/armazenamento/limpar":
+            lista = dados.get("caminhos")
+            r = armazenamento.limpar_orfaos(raiz, self._rels_protegidos(), [str(x)[:400] for x in lista] if isinstance(lista, list) else [])
+            return self._json(200, {"ok": True, **r})
+
         if caminho == "/api/biblioteca/obra/excluir":
-            if self.server.traducao.estado == "executando":  # type: ignore[attr-defined]
-                return self._negar(409, "Há uma tradução em andamento. Espere terminar ou cancele antes de excluir.")
+            if self._em_uso(str(dados.get("obra", ""))[:120]):
+                return self._negar(409, "Há capítulos desta obra sendo traduzidos (ou na fila). Cancele-os na aba Traduções antes de excluir.")
             if manual.salvando:
                 return self._negar(409, "Há imagens sendo salvas agora. Espere terminar antes de excluir.")
             try:
@@ -491,13 +587,13 @@ class Manipulador(BaseHTTPRequestHandler):
             return self._json(200, {"ok": True, **r})
 
         if caminho == "/api/biblioteca/capitulos/excluir":            # só os capítulos escolhidos de uma obra
-            if self.server.traducao.estado == "executando":  # type: ignore[attr-defined]
-                return self._negar(409, "Há uma tradução em andamento. Espere terminar ou cancele antes de excluir.")
-            if manual.salvando:
-                return self._negar(409, "Há imagens sendo salvas agora. Espere terminar antes de excluir.")
             rels = dados.get("rels")
             if not isinstance(rels, list) or len(rels) > 5000:
                 return self._negar(400, "Escolha os capítulos.")
+            if self._em_uso("", rels):
+                return self._negar(409, "Algum destes capítulos está sendo traduzido (ou na fila). Cancele-o na aba Traduções antes de excluir.")
+            if manual.salvando:
+                return self._negar(409, "Há imagens sendo salvas agora. Espere terminar antes de excluir.")
             try:
                 r = biblioteca.excluir_capitulos(raiz, str(dados.get("obra", ""))[:120], [str(x)[:300] for x in rels])
             except ErroBaixador as erro:
@@ -507,8 +603,8 @@ class Manipulador(BaseHTTPRequestHandler):
         if caminho == "/api/biblioteca/excluir-tudo":
             if str(dados.get("confirmacao", "")) != "APAGAR TUDO":
                 return self._negar(400, "Confirmação ausente: nada foi apagado.")
-            if self.server.traducao.estado == "executando":  # type: ignore[attr-defined]
-                return self._negar(409, "Há uma tradução em andamento. Espere terminar ou cancele antes de apagar.")
+            if self._em_uso():
+                return self._negar(409, "Há capítulos sendo traduzidos (ou na fila). Cancele-os na aba Traduções antes de apagar tudo.")
             if manual.salvando:
                 return self._negar(409, "Há imagens sendo salvas agora. Espere terminar antes de apagar.")
             try:
@@ -632,7 +728,11 @@ class Manipulador(BaseHTTPRequestHandler):
 
         def iniciar(lista: List[Path]) -> None:
             if not web:
-                return tarefa.iniciar_lote(lista, cfg=cfg)
+                ativos = tarefa.rels_ativos()
+                bloqueio = ativos and web_ia.conferir_mesma_obra([f"{p.parent.name}/{p.name}" for p in lista], ativos)   # com tradução rodando, só entra capítulo da mesma obra
+                if bloqueio:
+                    raise ErroBaixador(bloqueio)
+                return tarefa.adicionar(lista, cfg=cfg)
             rels = [f"{p.parent.name}/{p.name}" for p in lista]
             existentes = tarefa.rels_em_preparacao() | {a["rel"] for a in web_ia.aguardando_da_biblioteca(raiz)}   # a preparação inclui o que já está pronto no disco
             bloqueio = web_ia.conferir_mesma_obra(rels, existentes)
@@ -675,6 +775,22 @@ class Manipulador(BaseHTTPRequestHandler):
             return self._negar(422, str(erro))
         return self._json(200, {"ok": True})
 
+    def _rels_protegidos(self) -> set:
+        """Capítulos que a limpeza de restos nunca toca: processados agora ou com preparação da IA web pendente."""
+        return self.server.traducao.rels_em_preparacao() | {a["rel"] for a in web_ia.aguardando_da_biblioteca(self.server.raiz)}  # type: ignore[attr-defined]
+
+    def _em_uso(self, obra: str = "", rels: Any = None) -> bool:
+        """Algum capítulo (dos `rels`, ou da obra, ou qualquer um) está sendo traduzido ou espera na fila agora? Só esses não podem ser apagados."""
+        ativos = self.server.traducao.rels_ativos()  # type: ignore[attr-defined]
+        if not ativos:
+            return False
+        if rels:
+            return bool(ativos & {str(r)[:300] for r in rels})
+        if obra:
+            chave = organizacao._chave(obra)
+            return any(c["rel"] in ativos for o in biblioteca.listar(self.server.raiz)["obras"] if organizacao._chave(o["nome"]) == chave for c in o["capitulos"])  # type: ignore[attr-defined]
+        return True
+
     def _web_ia(self, rota: str, dados: Dict[str, Any]) -> None:
         raiz: Path = self.server.raiz  # type: ignore[attr-defined]
         tarefa = self.server.traducao  # type: ignore[attr-defined]
@@ -686,7 +802,7 @@ class Manipulador(BaseHTTPRequestHandler):
             if not isinstance(rels, list):
                 return self._negar(400, "Escolha os capítulos.")
             try:
-                arquivos = web_ia.exportar(raiz, obra, [str(r)[:300] for r in rels], bool(dados.get("introducao", True)), bool(dados.get("dividir", False)), int(dados.get("limite") or web_ia.LIMITE_PADRAO))
+                arquivos = web_ia.exportar(raiz, obra, [str(r)[:300] for r in rels], bool(dados.get("introducao", True)), bool(dados.get("dividir", False)), int(dados.get("limite") or web_ia.LIMITE_PADRAO), bool(dados.get("somente_pendentes")))
             except (ValueError, TypeError) as erro:
                 return self._negar(422, str(erro))
             if rota == "exportar":
@@ -697,6 +813,30 @@ class Manipulador(BaseHTTPRequestHandler):
             else:
                 corpo, tipo, nome = web_ia.zip_dos_arquivos(arquivos, pasta), "application/zip", f"{pasta}-textos.zip"
             return self._enviar(200, tipo, corpo, extras={"Content-Disposition": f'attachment; filename="{nome}"'})
+        if rota == "glossario":
+            try:
+                return self._json(200, {"termos": edicoes.ler_glossario(raiz, obra)})
+            except ErroBaixador as erro:
+                return self._negar(404, str(erro))
+        if rota == "glossario/salvar":
+            try:
+                termos = edicoes.gravar_glossario(raiz, obra, dados.get("termos"))
+            except ErroBaixador as erro:
+                return self._negar(400, str(erro))
+            return self._json(200, {"ok": True, "termos": termos})
+        if rota == "revisao/exportar":
+            try:
+                return self._json(200, {"arquivo": web_ia.exportar_revisao(raiz, obra)})
+            except ValueError as erro:
+                return self._negar(422, str(erro))
+        if rota == "revisao/importar":
+            textos = dados.get("textos")
+            if not isinstance(textos, list) or not all(isinstance(t, str) for t in textos) or not any(t.strip() for t in textos):
+                return self._negar(400, "Cole o texto revisado ou escolha os arquivos TXT.")
+            r = web_ia.importar_revisao(raiz, obra, textos, bool(dados.get("gravar")))
+            if r["aplicado"] and r["alteradas"]:
+                biblioteca.esquecer_versao()
+            return self._json(200, {"ok": True, **r})
         if rota == "importar":
             textos = dados.get("textos")
             if not isinstance(textos, list) or not all(isinstance(t, str) for t in textos) or not any(t.strip() for t in textos):
@@ -924,6 +1064,8 @@ def criar_servidor(
     servidor.raiz = Path(raiz) if raiz is not None else PASTA_PADRAO  # type: ignore[attr-defined]
     servidor.manual = manual if manual is not None else SessaoManual()  # type: ignore[attr-defined]
     servidor.traducao = TarefaTraducao()  # type: ignore[attr-defined]
+    if raiz is None:                                      # só a biblioteca de verdade guarda a fila (testes e bibliotecas de teste não)
+        servidor.traducao.usar_arquivo_fila(DADOS / "fila.json", servidor.raiz)  # type: ignore[attr-defined]
     servidor.celular = celular if celular is not None else ControleCelular(servidor.raiz)  # type: ignore[attr-defined]
     servidor.leitores = {ID_BIBLIOTECA: servidor.raiz}  # type: ignore[attr-defined]
     servidor.token = token  # type: ignore[attr-defined]
@@ -938,6 +1080,10 @@ def abrir_interface(abrir_navegador: bool = True) -> int:
         print(aviso_pasta)
     PASTA_PADRAO.mkdir(parents=True, exist_ok=True)
     migrar_dados_antigos()
+    try:
+        lixeira.limpar_vencidos(PASTA_PADRAO)            # o que está na lixeira há mais de 14 dias é apagado de vez
+    except OSError:
+        pass
     try:                                                  # leva capítulos antigos para obras/Obra/Capítulo (só move, nunca apaga)
         relatorio = estrutura.normalizar(PASTA_PADRAO)
         if relatorio["movidos"]:
