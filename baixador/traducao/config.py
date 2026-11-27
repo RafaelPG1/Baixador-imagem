@@ -16,8 +16,6 @@ ARQUIVO = configuracao.DADOS / "traducao.json"
 MOTOR_PADRAO = "local"
 MOTORES = {
     "local": "TranslateGemma via Ollama (local, grátis) — padrão",
-    "deepl": "DeepL (na nuvem; envia só o texto; exige DEEPL_API_KEY no .env)",
-    "gemini": "Gemini (na nuvem; envia só o texto; exige GEMINI_API_KEY no .env)",
     "mymemory": "MyMemory (na nuvem, grátis; tradução literal, qualidade básica)",
     "web": "IA na web (manual): você copia os textos, traduz no ChatGPT/Gemini/Claude e importa de volta; sem API nem chave",
 }

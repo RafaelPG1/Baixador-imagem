@@ -30,8 +30,9 @@
 <main>
 <!-- ============================================================ BAIXAR -->
 <section id="pg-baixar" class="pagina" role="tabpanel" aria-labelledby="aba-baixar">
-  <form id="formulario" class="secao" autocomplete="off">
-    <div class="secao-cab"><h2>1. Site e capítulo</h2><span class="suave">O número e o nome vêm da aba do site; corrija se precisar.</span></div>
+  <form id="formulario" class="pg-passos" autocomplete="off">
+   <div class="cartao">
+    <div class="secao-cab"><h2><span class="passo">1</span>Site e capítulo</h2><span class="suave">O número e o nome vêm da aba do site; corrija se precisar.</span></div>
     <div class="grade-2">
       <label class="campo"><span>Endereço do capítulo</span>
         <input type="text" autocomplete="off" id="url" placeholder="https://exemplo.com/obra/capitulo-12" inputmode="url" spellcheck="false" required>
@@ -49,8 +50,10 @@
     </div>
     <p class="nota num" id="cap-previa"></p>
     <div id="obra-aviso" class="nota" role="status" hidden></div>
+   </div>
 
-    <div class="secao-cab"><h2>2. Como baixar</h2></div>
+   <div class="cartao">
+    <div class="secao-cab"><h2><span class="passo">2</span>Como baixar</h2></div>
     <fieldset id="modos">
       <legend class="sr">Como baixar</legend>
       <label class="marcar"><input type="radio" name="modo" value="manual" checked> Escolher as imagens manualmente (recomendado)</label>
@@ -72,8 +75,8 @@
       </div>
     </div>
 
-    <details>
-      <summary>Navegador e destino</summary>
+    <details class="au-bloco">
+      <summary><strong>Navegador e destino</strong><svg class="au-ic au-seta" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></summary>
       <div class="secao" style="padding-top: 8px">
         <div class="grade-2">
           <label class="campo">Navegador <select id="navegador"></select></label>
@@ -96,15 +99,16 @@
     </details>
 
     <div class="acoes">
-      <button type="submit" id="iniciar" class="btn principal grande">Abrir site no navegador</button>
+      <button type="submit" id="iniciar" class="btn principal grande au-verificar">Abrir site no navegador</button>
       <button type="button" id="fechar-nav" class="btn" disabled>Fechar navegador</button>
       <button type="button" id="limpar-tudo" class="btn" title="Zera esta operação (endereço, obra, lista de imagens, andamento). Não apaga nada da biblioteca.">Limpar tudo</button>
       <p id="mensagem" class="msg" role="alert"></p>
     </div>
+   </div>
   </form>
 
-  <section class="secao" id="secao-busca">
-    <div class="secao-cab"><h2>3. Procurar e baixar</h2></div>
+  <section class="cartao" id="secao-busca">
+    <div class="secao-cab"><h2><span class="passo">3</span>Procurar e baixar</h2></div>
     <p id="instrucao"></p>
     <div class="linha-form">
       <label class="marcar">Busca
@@ -124,7 +128,7 @@
     </div>
   </section>
 
-  <section class="secao">
+  <section class="cartao">
     <div class="secao-cab"><h2>Imagens encontradas <span id="contagem-manual" class="num"></span></h2></div>
     <div class="acoes">
       <button type="button" id="marcar-tudo" class="btn pequeno">Marcar tudo</button>
@@ -141,7 +145,7 @@
     <details id="falhas-manual" hidden><summary id="falhas-titulo"></summary><ul id="lista-falhas" class="nota"></ul></details>
   </section>
 
-  <section class="secao">
+  <section class="cartao">
     <div class="secao-cab"><h2>Andamento</h2></div>
     <pre id="log-manual" class="registro" aria-live="polite"></pre>
   </section>
@@ -183,18 +187,6 @@
         <button type="button" id="excluir-tudo" class="bib-item perigo" title="Apaga TODAS as obras da biblioteca (pede confirmação)"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16"/><path d="M10 11v6M14 11v6"/><path d="M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12"/><path d="M9 7V4h6v3"/></svg><span>Excluir todas as obras</span></button>
       </div>
     </div>
-  </div>
-
-  <div id="bib-andamento" class="bib-andamento" hidden>
-    <div class="bib-and-linha">
-      <span id="bib-and-chip" class="chip ativo">Traduzindo</span>
-      <span id="trad-estado" class="bib-and-texto" role="status"></span>
-      <div class="tr-barra bib-and-barra" aria-hidden="true"><div id="bib-and-fill"></div></div>
-      <button type="button" id="bib-log-btn" class="btn pequeno" aria-expanded="false" aria-controls="log-traducao">Registro</button>
-      <button type="button" id="trad-cancelar" class="btn pequeno" hidden>Cancelar tradução</button>
-      <button type="button" id="bib-and-fechar" class="btn pequeno bib-icone" aria-label="Fechar aviso" hidden><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
-    </div>
-    <pre id="log-traducao" class="registro" aria-live="polite" hidden></pre>
   </div>
 
   <div id="bib-linhas" class="linhas" aria-live="polite"></div>
@@ -275,36 +267,41 @@
   <details class="au-bloco"><summary><strong>Histórico de atividade</strong><svg class="au-ic au-seta" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></summary><div id="pi-hist" class="au-tempo"></div></details>
 </section>
 
-<section id="pg-traducoes" class="pagina" role="tabpanel" aria-labelledby="aba-traducoes" hidden>
-  <div class="secao">
-    <div class="secao-cab"><h2>Traduções</h2><span class="suave">Acompanhe o que está sendo traduzido agora. Para começar uma tradução, use a Biblioteca ou a opção automática da aba Baixar.</span></div>
-    <fieldset class="tr-motor" id="tr-motor" aria-describedby="tr-motor-nota">
-      <legend>Motor de tradução</legend>
-      <div id="tr-motor-opcoes" class="tr-motor-opcoes"></div>
+<section id="pg-traducoes" class="pagina au tr" role="tabpanel" aria-labelledby="aba-traducoes" hidden>
+  <header class="au-painel">
+    <div class="au-topo">
+      <div class="au-titulo"><h2>Traduções <span id="tr-chip" class="au-selo">Nenhuma tradução</span></h2><p class="suave">Acompanhe o que está sendo traduzido agora. Para começar uma tradução, use a Biblioteca ou a opção automática da aba Baixar.</p></div>
+      <div class="pi-acoes">
+        <button type="button" id="tr-cancelar" class="btn perigo" hidden>Cancelar tradução</button>
+        <button type="button" id="tr-retentar" class="btn" hidden title="Refaz só os capítulos que terminaram cancelados ou com erro; os já traduzidos não são tocados">Tentar de novo</button>
+        <button type="button" id="tr-limpar-cancelados" class="btn" hidden title="Tira da lista os capítulos cancelados. Nenhum arquivo é apagado.">Limpar cancelados</button>
+        <button type="button" id="tr-limpar-prontos" class="btn" hidden title="Tira da lista os capítulos já traduzidos. As traduções salvas continuam na biblioteca.">Limpar traduzidos</button>
+      </div>
+    </div>
+  </header>
+  <details class="au-bloco" id="tr-motor">
+    <summary><strong>Motor de tradução</strong> <span class="suave" id="tr-motor-resumo"></span><svg class="au-ic au-seta" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></summary>
+    <div class="tr-motor-corpo">
+      <div id="tr-motor-opcoes" class="tr-motor-opcoes" role="radiogroup" aria-label="Motor de tradução" aria-describedby="tr-motor-nota"></div>
       <p id="tr-uso" class="nota" role="status"></p>
       <label class="nota" id="tr-modelo-campo">Modelo do TranslateGemma no Ollama: <select id="tr-modelo" aria-label="Modelo local do Ollama"></select></label>
-      <p id="tr-motor-nota" class="nota">Vale para as próximas traduções; a que está em andamento termina com o motor com que começou, e nada troca de motor sozinho. O TranslateGemma roda no Ollama, neste computador (baixe com ollama pull translategemma:4b). O DeepL usa a chave DEEPL_API_KEY e o Gemini a chave GEMINI_API_KEY, no arquivo .env; os motores de nuvem recebem só o texto extraído, nunca a imagem. Por enquanto só inglês para português.</p>
+      <p id="tr-motor-nota" class="nota">Vale para as próximas traduções; a que está em andamento termina com o motor com que começou, e nada troca de motor sozinho. O TranslateGemma roda no Ollama, neste computador (baixe com ollama pull translategemma:4b). Os motores de nuvem recebem só o texto extraído, nunca a imagem. Por enquanto só inglês para português.</p>
       <div class="acoes"><button type="button" id="tr-hy-verificar" class="btn">Verificar o motor escolhido</button><span id="tr-hy-status" class="nota" role="status"></span></div>
-    </fieldset>
-    <div class="acoes">
-      <span id="tr-chip" class="chip">Nenhuma tradução</span>
-      <button type="button" id="tr-cancelar" class="btn" hidden>Cancelar tradução</button>
-      <button type="button" id="tr-retentar" class="btn" hidden title="Refaz só os capítulos que terminaram cancelados ou com erro; os já traduzidos não são tocados">Tentar de novo</button>
-      <button type="button" id="tr-limpar-cancelados" class="btn" hidden title="Tira da lista os capítulos cancelados. Nenhum arquivo é apagado.">Limpar cancelados</button>
-      <button type="button" id="tr-limpar-prontos" class="btn" hidden title="Tira da lista os capítulos já traduzidos. As traduções salvas continuam na biblioteca.">Limpar traduzidos</button>
     </div>
-    <div id="tr-vazio" class="vazio"><strong>Nenhuma tradução em andamento</strong><span>Na Biblioteca, use “Traduzir tudo que falta” ou o botão de um capítulo; na aba Baixar, ligue “Traduzir automaticamente após concluir os downloads”.</span></div>
-    <div id="tr-painel" hidden>
+  </details>
+  <div id="tr-vazio" class="au-vazio"><svg class="au-ic au-grande" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 8 6 0M9 4v4M6.5 8c.6 3 3 5.2 6 6.5M12 8c-.7 3.2-3.3 5.8-7 7"/><path d="m13 20 4-9 4 9M14.4 17h5.2"/></svg><strong>Nenhuma tradução em andamento</strong><span>Na Biblioteca, use “Traduzir tudo que falta” ou o botão de um capítulo. Na aba Baixar, ligue “Traduzir automaticamente após concluir os downloads”.</span></div>
+  <div id="tr-painel" class="au-novos" hidden>
+    <div class="tr-andamento">
       <p id="tr-atual" class="tr-atual" role="status"></p>
-      <div class="tr-barra" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="tr-barra"><div id="tr-barra-in"></div></div>
+      <div class="au-progresso tr-barra" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="tr-barra"><i id="tr-barra-in"></i></div>
       <p id="tr-numeros" class="nota num"></p>
-      <div id="tr-aviso" class="faixa aviso" hidden></div>
-      <div id="tr-erro" class="faixa erro" hidden></div>
-      <div id="tr-avisos" class="faixa aviso" hidden></div>
-      <ul id="tr-fila" class="tr-fila" aria-label="Capítulos da tradução"></ul>
-      <p id="tr-resumo" class="nota"></p>
-      <details><summary>Registro detalhado</summary><pre id="tr-log" class="registro" aria-live="off"></pre></details>
     </div>
+    <div id="tr-aviso" class="faixa aviso" hidden></div>
+    <div id="tr-erro" class="faixa erro" hidden></div>
+    <div id="tr-avisos" class="faixa aviso" hidden></div>
+    <ul id="tr-fila" class="tr-fila" aria-label="Capítulos da tradução"></ul>
+    <p id="tr-resumo" class="nota"></p>
+    <details class="au-bloco"><summary><strong>Registro detalhado</strong><svg class="au-ic au-seta" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></summary><pre id="tr-log" class="registro" aria-live="off"></pre></details>
   </div>
 </section>
 

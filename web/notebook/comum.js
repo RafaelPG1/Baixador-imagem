@@ -63,7 +63,7 @@ window.addEventListener('hashchange', () => irPara(location.hash.slice(1)));
 /* Motor de tradução: uma só configuração (guardada no computador), vista na Biblioteca e na aba Traduções. */
 const Motor = (() => {
   let cfg = {motor: 'local', motores: {}};
-  const mudou = () => document.dispatchEvent(new CustomEvent('motor-mudou', {detail: cfg}));
+  const mudou = () => { for (const k of ['deepl', 'gemini']) delete (cfg.motores || {})[k]; document.dispatchEvent(new CustomEvent('motor-mudou', {detail: cfg})); };   // motores removidos: some mesmo se o servidor ainda os listar
   async function carregar() { try { cfg = await ler('/api/traducao/config'); mudou(); } catch (_) {} return cfg; }
   async function escolher(valor) {
     try { cfg = await chamar('/api/traducao/config', {motor: valor}); aviso('Motor de tradução salvo.'); }
@@ -77,7 +77,7 @@ const Motor = (() => {
     mudou();
     return cfg;
   }
-  /* Confere o que o motor escolhido precisa (Ollama + modelo; chave do DeepL/Gemini). Quem responde é o próprio sistema de tradução. */
+  /* Confere o que o motor escolhido precisa (Ollama + modelo; motores de nuvem). Quem responde é o próprio sistema de tradução. */
   async function verificar(valor) {
     try { return await chamar('/api/traducao/verificar', {motor: valor}); }
     catch (e) { return {pronto: false, mensagem: e.message}; }

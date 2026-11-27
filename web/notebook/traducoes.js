@@ -18,7 +18,7 @@
     $('tr-cancelar').hidden = !ativo; $('tr-cancelar').disabled = !!e.cancelando;
     $('tr-cancelar').textContent = e.cancelando ? 'Cancelando…' : 'Cancelar tradução';
     const chip = $('tr-chip');
-    chip.className = 'chip ' + (ativo ? 'ativo' : e.estado === 'concluido' ? 'ok' : e.estado === 'erro' ? (e.erro === 'Tradução cancelada.' ? 'espera' : 'erro') : '');
+    chip.className = 'au-selo ' + (ativo ? 'ativo' : e.estado === 'concluido' ? 'ok' : e.estado === 'erro' ? (e.erro === 'Tradução cancelada.' ? 'aviso' : 'erro') : '');
     chip.textContent = ativo ? (e.cancelando ? 'Cancelando…' : 'Traduzindo') : e.estado === 'concluido' ? 'Concluída' : e.estado === 'erro' ? (e.erro === 'Tradução cancelada.' ? 'Cancelada' : 'Com erro') : 'Nenhuma tradução';
     if (!algo) return;
     const dep = e.dependencias || {pronto: true};
@@ -32,7 +32,7 @@
     $('tr-atual').textContent = ativo ? (atual ? `Traduzindo agora: ${atual.nome}${atual.etapa ? ' — ' + atual.etapa : ''}` : 'Preparando…')
       : e.estado === 'concluido' ? (e.resumo && e.resumo.aguardando && !e.resumo.capitulos ? 'Textos prontos para a IA web.' : 'Tradução concluída.') : e.estado === 'erro' ? (e.erro === 'Tradução cancelada.' ? 'Tradução cancelada.' : 'A tradução parou.') : '';
     const barra = $('tr-barra'); barra.setAttribute('aria-valuenow', String(pct));
-    barra.className = 'tr-barra' + (e.estado === 'concluido' ? ' ok' : e.estado === 'erro' && e.erro !== 'Tradução cancelada.' ? ' erro' : '');
+    barra.className = 'au-progresso tr-barra' + (e.estado === 'concluido' ? ' ok' : e.estado === 'erro' && e.erro !== 'Tradução cancelada.' ? ' erro' : '');
     $('tr-barra-in').style.width = pct + '%';
     const fim = e.fim || e.agora, dec = Math.max(0, fim - e.inicio);
     const partes = [`${pct}%`, `${e.prontos}/${e.capitulos} capítulo(s) prontos para ler`, `decorrido ${hms(dec)}`];
@@ -46,7 +46,7 @@
     ul.replaceChildren(...itens.map((i) => {
       const li = document.createElement('li'); li.className = i.estado;
       const nome = document.createElement('span'); nome.className = 'nome'; nome.textContent = i.nome;
-      const est = document.createElement('span'); est.className = 'est';
+      const est = document.createElement('span'); est.className = 'est au-selo ' + ({traduzindo: 'ativo', pronto: 'ok', falhou: 'erro', cancelado: 'aviso', interrompido: 'aviso', aguardando: 'aviso'}[i.estado] || '');
       est.textContent = (ROTULO[i.estado] || i.estado) + (i.estado === 'traduzindo' && i.total ? ` ${Math.floor((i.feitas || 0) / i.total * 100)}%` : '')
         + (i.estado === 'traduzindo' && i.etapa ? ` · ${i.etapa}` : '');
       li.append(nome, est);
@@ -127,15 +127,18 @@
     pendente = setTimeout(sondar, proximo);
   }
   /* ---- motor de tradução (a configuração é a mesma da Biblioteca) */
+  const MOTOR_TEXTO = {local: ['TranslateGemma', 'Roda no Ollama, neste computador. Grátis e padrão.'], mymemory: ['MyMemory', 'Na nuvem, grátis. Tradução literal, qualidade básica.'],
+    web: ['IA na web', 'Manual: você copia os textos, traduz no ChatGPT, Gemini ou Claude e importa de volta. Sem API nem chave.']};
   function desenharMotores(cfg) {
     const caixa = $('tr-motor-opcoes');
     if (!caixa.children.length) {
       Object.entries(cfg.motores || {}).forEach(([valor, rotulo]) => {
-        const l = document.createElement('label'); l.className = 'marcar';
+        const l = document.createElement('label'); l.className = 'tr-op';
         const r = document.createElement('input'); r.type = 'radio'; r.name = 'tr-motor'; r.value = valor;
         r.addEventListener('change', async () => { await Motor.escolher(valor); verificarMotor(); });
-        const t = document.createElement('span'); t.textContent = rotulo;
-        l.append(r, ' ', t); caixa.append(l);
+        const [nome, desc] = MOTOR_TEXTO[valor] || [rotulo, ''];
+        const t = document.createElement('span'); t.className = 'tr-op-txt'; t.append(Object.assign(document.createElement('strong'), {textContent: nome}), Object.assign(document.createElement('span'), {className: 'suave', textContent: desc}));
+        l.append(r, t); caixa.append(l);
       });
     }
     caixa.querySelectorAll('input').forEach((r) => { r.checked = r.value === cfg.motor; });
@@ -144,7 +147,7 @@
     sel.replaceChildren(...Object.entries(modelos).map(([v, r]) => new Option(r, v)));
     sel.value = cfg.modelo;
     const rotulo = (cfg.motores || {})[cfg.motor] || cfg.motor, local = cfg.motor === 'local';
-    $('tr-modelo-campo').hidden = !local;
+    $('tr-modelo-campo').hidden = !local; $('tr-motor-resumo').textContent = (MOTOR_TEXTO[cfg.motor] || [rotulo])[0];
     $('tr-uso').textContent = 'Próximas traduções: ' + rotulo + ' (' + (cfg.idiomas || 'en → pt-BR') + ')' + (local ? ' · modelo: ' + (modelos[cfg.modelo] || cfg.modelo) : '');
   }
   $('tr-modelo').addEventListener('change', async () => { await Motor.escolherModelo($('tr-modelo').value); if (Motor.atual.motor === 'local') verificarMotor(); });

@@ -437,45 +437,19 @@ async function cancelarCapitulo(rel) {
   if (typeof sondarTraducao === 'function') sondarTraducao();
 }
 async function traduzir(alvo) {
-  tradLog = 0; $('log-traducao').textContent = '';
+  tradLog = 0;
   const r = await acao('/api/traduzir', {...alvo}, (x) => x.conjuntos ? `Traduzindo ${x.conjuntos} capítulo(s)…` : 'Tradução iniciada.');
   if (r) { sondarTraducao(); document.dispatchEvent(new CustomEvent('traducao-iniciada')); }
 }
-let andamentoDispensado = '', filaAnterior = '';
+let filaAnterior = '';
 async function sondarTraducao() {
   let e;
-  try { e = await ler('/api/traducao/estado', '&log=' + tradLog); } catch (_) { return; }
+  try { e = await ler('/api/traducao/estado', '&log=999999999'); } catch (_) { return; }
   const dep = e.dependencias || {pronto: true};
   $('trad-aviso').hidden = !!dep.pronto; $('trad-aviso').textContent = dep.mensagem || '';
-  if (e.log && e.log.length) {
-    $('log-traducao').textContent += (tradLog ? '\n' : '') + e.log.join('\n');
-    $('log-traducao').scrollTop = $('log-traducao').scrollHeight;
-    tradLog = e.log_total;
-  }
   const rodando = e.estado === 'executando';
   $('trad-pendentes').disabled = rodando;
 
-  // faixa de andamento: só existe enquanto há o que mostrar
-  const aviso_ = (e.avisos || []).join(' ');
-  const base = rodando
-    ? `Traduzindo… ${e.total ? Math.floor(e.feitas / e.total * 100) : 0}%` + (e.capitulos > 1 ? ` · ${e.prontos}/${e.capitulos} capítulos prontos para ler` : '')
-    : e.estado === 'concluido' ? `Pronto: ${e.resumo.falas} fala(s) em ${e.resumo.capitulos} capítulo(s)` + (e.resumo.revisar ? ` · ${e.resumo.revisar} a revisar` : '') + (e.resumo.erros ? ` · ${e.resumo.erros} com erro` : '') + (e.resumo.aguardando ? ` · ${e.resumo.aguardando} aguardando a tradução da IA web` : '') + '.'
-    : e.estado === 'erro' ? (e.erro || 'Erro.') : '';
-  const texto = [base, aviso_].filter(Boolean).join(' ');
-  const chave = `${e.estado}|${e.inicio}|${e.fim}`;
-  const faixa = $('bib-andamento');
-  const visivel = !!texto && (rodando || andamentoDispensado !== chave);
-  faixa.hidden = !visivel;
-  faixa.classList.toggle('erro', !rodando && e.estado === 'erro'); faixa.classList.toggle('ok', !rodando && e.estado === 'concluido');
-  $('trad-estado').textContent = texto;
-  const chip = $('bib-and-chip');
-  chip.className = 'chip ' + (rodando ? 'ativo' : e.estado === 'erro' ? 'erro' : 'ok');
-  chip.textContent = rodando ? (e.cancelando ? 'Cancelando…' : 'Traduzindo') : e.estado === 'erro' ? 'Erro' : 'Concluído';
-  const frac = e.total ? e.feitas / e.total : 0;
-  $('bib-and-fill').style.width = Math.round((e.estado === 'concluido' ? 1 : Math.min(1, frac)) * 100) + '%';
-  $('trad-cancelar').hidden = !rodando; $('trad-cancelar').disabled = !!e.cancelando;
-  $('trad-cancelar').textContent = e.cancelando ? 'Cancelando…' : 'Cancelar tradução';
-  $('bib-and-fechar').hidden = rodando; $('bib-and-fechar').dataset.chave = chave;
   $('bib-tr-btn').classList.toggle('ativo', rodando);
 
   // estado de cada capítulo na lista (trilho)
@@ -488,11 +462,6 @@ async function sondarTraducao() {
   prontosVistos = e.prontos;
   tradRodando = rodando;
 }
-$('bib-and-fechar').addEventListener('click', () => { andamentoDispensado = $('bib-and-fechar').dataset.chave; $('bib-andamento').hidden = true; });
-$('bib-log-btn').addEventListener('click', () => {
-  const pre = $('log-traducao'); pre.hidden = !pre.hidden; $('bib-log-btn').setAttribute('aria-expanded', String(!pre.hidden));
-  if (!pre.hidden) pre.scrollTop = pre.scrollHeight;
-});
 $('trad-pendentes').addEventListener('click', () => traduzir({lote: 'pendentes'}));
 
 /* ---- motor de tradução (o mesmo da aba Traduções; a escolha é sempre explícita) */
@@ -500,7 +469,7 @@ function desenharMotorBib(cfg) {
   const sel = $('bib-motor');
   if (!sel.options.length) Object.entries(cfg.motores || {}).forEach(([v, r]) => sel.append(new Option(r, v)));
   sel.value = cfg.motor;
-  $('bib-tr-resumo').textContent = ({local: 'TranslateGemma', deepl: 'DeepL', gemini: 'Gemini', mymemory: 'MyMemory'})[cfg.motor] || '';
+  $('bib-tr-resumo').textContent = ({local: 'TranslateGemma', mymemory: 'MyMemory', web: 'IA na web'})[cfg.motor] || '';
 }
 document.addEventListener('motor-mudou', (ev) => desenharMotorBib(ev.detail));
 $('bib-motor').addEventListener('change', async () => {
@@ -510,7 +479,6 @@ $('bib-motor').addEventListener('change', async () => {
   const h = await Motor.verificar(v); st.textContent = (h.pronto ? '✔ ' : '✖ ') + h.mensagem;
 });
 Motor.carregar();
-$('trad-cancelar').addEventListener('click', () => acao('/api/traducao/cancelar'));
 $('excluir-tudo').addEventListener('click', async () => {
   const n = bib.obras.length;
   if (!n) { aviso('A biblioteca já está vazia.'); return; }
