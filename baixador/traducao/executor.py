@@ -330,6 +330,11 @@ class TarefaTraducao:
         with self._lock:
             return {it["rel"] for it in self.itens if self.estado == "executando" and it["estado"] in ("fila", "traduzindo")}
 
+    def itens_por_rel(self) -> Dict[str, Dict[str, Any]]:
+        """Estado atual de cada capítulo da fila (o mais recente por pasta); leve, sem checar o Node."""
+        with self._lock:
+            return {it["rel"]: dict(it) for it in self.itens if not it.get("oculto") and it["estado"] != "refeito"}
+
     def rels_em_preparacao(self) -> set:
         with self._lock:
             return {it["rel"] for it in self.itens if not it.get("oculto") and it["estado"] in ("fila", "traduzindo", "aguardando", "interrompido")}

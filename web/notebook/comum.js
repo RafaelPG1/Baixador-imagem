@@ -37,8 +37,8 @@ function ampliar(src, alt) {
 $('ampliada').addEventListener('click', () => { $('ampliada').hidden = true; $('ampliada').replaceChildren(); });
 document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') $('ampliada').click(); });
 
-/* abas: #baixar | #biblioteca | #atualizacoes | #traducoes | #celular */
-const PAGINAS = ['baixar', 'biblioteca', 'atualizacoes', 'traducoes', 'celular'];
+/* abas: #baixar | #biblioteca | #atualizacoes | #piloto | #traducoes | #celular */
+const PAGINAS = ['baixar', 'biblioteca', 'atualizacoes', 'piloto', 'traducoes', 'celular'];
 function irPara(pagina, foco) {
   if (!PAGINAS.includes(pagina)) pagina = 'baixar';
   PAGINAS.forEach((p) => {

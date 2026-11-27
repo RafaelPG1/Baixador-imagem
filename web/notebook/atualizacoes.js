@@ -5,7 +5,7 @@ const ROTULO_STATUS = {ok: 'verificada', erro: 'erro', sem_lista: 'sem lista', s
 const seguro = (u) => /^https?:\/\//i.test(u || '');
 
 function el(tag, classe, texto) { const e = document.createElement(tag); if (classe) e.className = classe; if (texto != null) e.textContent = texto; return e; }
-function botao(texto, aoClicar, classe = 'btn pequeno') { const b = el('button', classe, texto); b.type = 'button'; b.addEventListener('click', aoClicar); return b; }
+function botaoPequeno(texto, aoClicar, classe = 'btn pequeno') { const b = el('button', classe, texto); b.type = 'button'; b.addEventListener('click', aoClicar); return b; }
 
 function levarParaBaixar(obra, c) {                       // só preenche o formulário da aba Baixar: quem baixa é a pessoa
   $('url').value = c.url; $('url').dispatchEvent(new Event('input', {bubbles: true}));
@@ -18,7 +18,7 @@ function linhaCapitulo(obra, c) {
   const l = el('div', 'at-cap');
   l.append(el('span', 'num', 'Cap. ' + c.numero));
   if (c.rotulo && c.rotulo.toLowerCase() !== ('chapter ' + c.numero)) l.append(el('span', 'suave', c.rotulo));
-  l.append(botao('Baixar…', () => levarParaBaixar(obra, c)));
+  l.append(botaoPequeno('Baixar…', () => levarParaBaixar(obra, c)));
   if (seguro(c.url)) { const a = el('a', null, 'Abrir no site'); a.href = c.url; a.target = '_blank'; a.rel = 'noopener noreferrer'; l.append(a); }
   return l;
 }
@@ -28,7 +28,7 @@ function cartaoNovos(o) {
   const cab = el('div', 'at-obra-cab');
   cab.append(el('strong', null, o.nome), el('span', 'chip ok', o.novos.length === 1 ? '1 capítulo novo' : o.novos.length + ' capítulos novos'),
              el('span', 'suave', 'verificada em ' + dataHora(o.t)),
-             botao('Dispensar aviso', async () => { try { await chamar('/api/verificacao/dispensar', {obra: o.nome}); carregarAtualizacoes(); } catch (e) { aviso(e.message); } }));
+             botaoPequeno('Dispensar aviso', async () => { try { await chamar('/api/verificacao/dispensar', {obra: o.nome}); carregarAtualizacoes(); } catch (e) { aviso(e.message); } }));
   const lista = el('div', 'at-caps'); o.novos.forEach((n) => lista.append(linhaCapitulo(o.nome, n)));
   c.append(cab, lista);
   if (o.fora_total > o.novos.length) {
@@ -50,7 +50,7 @@ function linhaObra(o) {
   l.append(cx, el('span', 'nome', o.nome), status,
            el('span', 'suave', o.t ? dataHora(o.t) : ''),
            el('span', 'suave', o.total_site ? `${o.total_site} no site · ${o.fora_total} fora da biblioteca` : ''),
-           botao('Verificar só esta', () => iniciarVerificacao([o.nome])));
+           botaoPequeno('Verificar só esta', () => iniciarVerificacao([o.nome])));
   if (o.erro && o.status !== 'ok') l.append(el('span', 'suave at-erro', o.erro));
   return l;
 }

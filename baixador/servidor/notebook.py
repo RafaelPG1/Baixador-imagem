@@ -30,7 +30,7 @@ from urllib.parse import parse_qs, quote, unquote, urlsplit
 from baixador.biblioteca import acervo as biblioteca
 from baixador.traducao import config, edicoes, executor, legado, web_ia
 from baixador.navegador import navegadores
-from baixador.biblioteca import armazenamento, capa as capa_obra, busca, estrutura, exportar, historico, lidos, lixeira, obra as dados_obra, organizacao, verificacao
+from baixador.biblioteca import armazenamento, capa as capa_obra, busca, estrutura, exportar, historico, lidos, lixeira, obra as dados_obra, organizacao, piloto as piloto_auto, verificacao
 from baixador.servidor.base import (
     CSS, ESTATICOS_LEITOR, ESTATICOS_VERIFICACAO, JS, ServidorSilencioso, ler_capa, ler_web, pagina_leitor, web_em_cache,
 )
@@ -58,6 +58,7 @@ ESTATICOS = {
     "/estatico/biblioteca.js": ("notebook/biblioteca.js", JS),
     "/estatico/celular.js": ("notebook/celular.js", JS),
     "/estatico/atualizacoes.js": ("notebook/atualizacoes.js", JS),
+    "/estatico/piloto.js": ("notebook/piloto.js", JS),
     **ESTATICOS_LEITOR,
     **ESTATICOS_VERIFICACAO,
 }
@@ -329,6 +330,9 @@ class Manipulador(BaseHTTPRequestHandler):
         if caminho == "/api/verificacao":                        # aba Atualizações: novidades por obra, configuração, histórico
             return self._json(200, verificacao.painel(raiz) if raiz.is_dir() else {"config": verificacao.ler()["config"], "ultima": 0, "andamento": {}, "obras": [], "historico": []})
 
+        if caminho == "/api/piloto":                             # aba Piloto: estado, obras escolhidas, fila própria, erros, histórico
+            return self._json(200, self.server.piloto.painel())  # type: ignore[attr-defined]
+
         if caminho == "/api/versao":
             return self._json(200, {"versao": biblioteca.versao(raiz) if raiz.is_dir() else ""})
 
@@ -464,6 +468,26 @@ class Manipulador(BaseHTTPRequestHandler):
             if not verificacao.dispensar(str(dados.get("obra", "")), dados.get("numeros")):
                 return self._negar(404, "Obra sem novidades registradas.")
             return self._json(200, {"ok": True})
+
+        if caminho.startswith("/api/piloto/"):                   # o piloto só orquestra serviços existentes; nunca mexe em tarefa manual
+            pil = self.server.piloto  # type: ignore[attr-defined]
+            acao = caminho[len("/api/piloto/"):]
+            if acao == "config":
+                erro = piloto_auto.validar_config(dados)
+                if erro:
+                    return self._negar(400, erro)
+                return self._json(200, {"config": pil.configurar(**dados)})
+            if acao == "pausar":
+                pil.pausar(bool(dados.get("pausado", True)))
+                return self._json(200, {"ok": True})
+            if acao == "cancelar":
+                return self._json(200, {"canceladas": pil.cancelar_tarefas()})
+            if acao == "tentar":
+                return self._json(200, {"retomadas": pil.tentar_de_novo(str(dados.get("id", "")))})
+            if acao == "executar":
+                pil.executar_agora()
+                return self._json(200, {"ok": True})
+            return self._negar(404, "Ação desconhecida.")
 
         if caminho == "/api/historico/situacao":               # andamento / concluída / pausada (da OBRA no site; só a pessoa decide)
             if not historico.definir_situacao(str(dados.get("obra", "")), str(dados.get("situacao", "")), dados.get("t")):
@@ -1100,8 +1124,10 @@ def criar_servidor(
     verificacao.iniciar_periodico(servidor.raiz)           # relógio da verificação periódica (desligada até a pessoa ligar)
     servidor.manual = manual if manual is not None else SessaoManual()  # type: ignore[attr-defined]
     servidor.traducao = TarefaTraducao()  # type: ignore[attr-defined]
+    servidor.piloto = piloto_auto.Piloto(servidor.raiz, servidor.manual, servidor.traducao)  # type: ignore[attr-defined]
     if raiz is None:                                      # só a biblioteca de verdade guarda a fila (testes e bibliotecas de teste não)
         servidor.traducao.usar_arquivo_fila(DADOS / "fila.json", servidor.raiz)  # type: ignore[attr-defined]
+        servidor.piloto.iniciar()  # type: ignore[attr-defined]  # relógio do piloto (desligado até a pessoa ativar)
     servidor.celular = celular if celular is not None else ControleCelular(servidor.raiz)  # type: ignore[attr-defined]
     servidor.leitores = {ID_BIBLIOTECA: servidor.raiz}  # type: ignore[attr-defined]
     servidor.token = token  # type: ignore[attr-defined]

@@ -16,6 +16,7 @@
       <button class="aba" role="tab" id="aba-baixar" data-pagina="baixar" aria-selected="true" aria-controls="pg-baixar">Baixar imagens</button>
       <button class="aba" role="tab" id="aba-biblioteca" data-pagina="biblioteca" aria-selected="false" aria-controls="pg-biblioteca">Biblioteca</button>
       <button class="aba" role="tab" id="aba-atualizacoes" data-pagina="atualizacoes" aria-selected="false" aria-controls="pg-atualizacoes">Atualizações<span id="aba-at-ponto" class="ponto" hidden aria-label="há capítulos novos"></span></button>
+      <button class="aba" role="tab" id="aba-piloto" data-pagina="piloto" aria-selected="false" aria-controls="pg-piloto">Piloto automático<span id="aba-pi-ponto" class="ponto" hidden aria-label="precisa de atenção"></span></button>
       <button class="aba" role="tab" id="aba-traducoes" data-pagina="traducoes" aria-selected="false" aria-controls="pg-traducoes">Traduções<span id="aba-trad-ponto" class="ponto" hidden aria-label="traduzindo agora"></span></button>
       <button class="aba" role="tab" id="aba-celular" data-pagina="celular" aria-selected="false" aria-controls="pg-celular">Leitura pelo celular</button>
     </nav>
@@ -220,6 +221,40 @@
   <details class="secao"><summary><strong>Histórico de verificações</strong></summary><div id="at-hist" class="at-lista"></div></details>
 </section>
 
+<!-- ============================================================ PILOTO AUTOMÁTICO -->
+<section id="pg-piloto" class="pagina" role="tabpanel" aria-labelledby="aba-piloto" hidden>
+  <div class="secao">
+    <div class="secao-cab"><h2>Piloto automático</h2><span class="suave">Acompanha as obras que você escolher e leva os capítulos novos até a tradução. Começa desligado e só trabalha quando o navegador de downloads e a fila de tradução estão livres: o que você iniciar à mão tem prioridade e nunca é alterado.</span></div>
+    <div class="at-barra">
+      <span id="pi-chip" class="chip">Desativado</span>
+      <button type="button" id="pi-ativar" class="btn principal">Ativar piloto</button>
+      <button type="button" id="pi-pausar" class="btn" hidden>Pausar</button>
+      <button type="button" id="pi-executar" class="btn" title="Faz uma rodada agora, sem esperar o intervalo" hidden>Executar agora</button>
+      <button type="button" id="pi-cancelar" class="btn" title="Cancela só as tarefas do piloto. Nada é apagado e o que é manual não é tocado." hidden>Cancelar tarefas do piloto</button>
+    </div>
+    <p class="nota" id="pi-estado" role="status"></p>
+    <div id="pi-aviso" class="faixa aviso" hidden></div>
+  </div>
+  <div class="secao">
+    <div class="secao-cab"><h2>O que automatizar</h2></div>
+    <div class="at-barra">
+      <label class="marcar"><input type="checkbox" id="pi-et-verificar"> Verificar capítulos novos</label>
+      <label class="marcar"><input type="checkbox" id="pi-et-baixar"> Baixar os novos</label>
+      <label class="marcar"><input type="checkbox" id="pi-et-traduzir"> Traduzir os baixados</label>
+    </div>
+    <div class="at-barra">
+      <label class="marcar">Máx. de capítulos baixados por execução <input type="number" id="pi-lim-baixar" min="1" max="20" style="width:60px"></label>
+      <label class="marcar">Máx. de capítulos traduzidos por execução <input type="number" id="pi-lim-traduzir" min="1" max="20" style="width:60px"></label>
+      <label class="marcar">Verificar a cada <select id="pi-intervalo" aria-label="Intervalo do piloto"><option value="30">30 min</option><option value="60">1 hora</option><option value="180">3 horas</option><option value="360">6 horas</option><option value="720">12 horas</option><option value="1440">24 horas</option></select></label>
+    </div>
+    <p class="nota" id="pi-motor"></p>
+    <p class="nota">Nunca sobrescreve uma tradução existente, nunca baixa de novo o que já está na biblioteca e nunca apaga nada. O download usa o navegador do programa (abre uma janela) e respeita o intervalo entre acessos ao site.</p>
+  </div>
+  <details class="secao" open><summary><strong>Obras acompanhadas</strong> <span class="suave" id="pi-qtd"></span></summary><div id="pi-obras" class="at-lista"></div></details>
+  <div class="secao"><div class="secao-cab"><h2>Fila do piloto</h2></div><div id="pi-fila" class="at-lista"></div></div>
+  <details class="secao"><summary><strong>Histórico de atividade</strong></summary><div id="pi-hist" class="at-lista"></div></details>
+</section>
+
 <section id="pg-traducoes" class="pagina" role="tabpanel" aria-labelledby="aba-traducoes" hidden>
   <div class="secao">
     <div class="secao-cab"><h2>Traduções</h2><span class="suave">Acompanhe o que está sendo traduzido agora. Para começar uma tradução, use a Biblioteca ou a opção automática da aba Baixar.</span></div>
@@ -333,5 +368,6 @@
 <script defer src="/estatico/busca.js"></script>
 <script defer src="/estatico/celular.js"></script>
 <script defer src="/estatico/atualizacoes.js"></script>
+<script defer src="/estatico/piloto.js"></script>
 </body>
 </html>
