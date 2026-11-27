@@ -1221,6 +1221,10 @@ class SessaoManual:
 
                             dados_obra.gravar(destino.parent, str(meta.get("obra", "")), str(meta.get("url", "")))
                             self._gravar_capa(destino.parent, str(meta.get("url", "")))
+                    if meta and meta.get("obra") and salvos:                # histórico das obras: só capítulo de obra da biblioteca, nunca pasta qualquer
+                        from baixador.biblioteca import historico
+
+                        historico.anotar_capitulo(destino, baixado=not incompleto)
                 except Exception:
                     pass  # gravar os dados do capítulo é um extra: não pode atrapalhar o salvamento
             for nome in salvos:
@@ -1463,6 +1467,14 @@ class SessaoManual:
             except Exception:
                 pass
         self._indices[chave] = (agora, indice)
+        if indice is not None and indice.confiavel and obra:
+            try:                                                        # histórico das obras: último capítulo que o site publica e quais já são conhecidos
+                from baixador.biblioteca import historico
+
+                historico.registrar_obra("", obra, encontrado=indice.maior.numero, descoberta=True,
+                                         conhecidos={i.numero: i.url for i in indice.itens})
+            except Exception:
+                pass
         if indice is not None and indice.confiavel:
             self._registrar(
                 f"Lista de capítulos do site lida ({indice.origem}): {len(indice)} capítulo(s), do {indice.menor.numero} ao {indice.maior.numero}."

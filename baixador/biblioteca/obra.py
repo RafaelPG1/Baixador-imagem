@@ -43,6 +43,12 @@ def gravar(pasta_obra: Path, nome: str = "", url_capitulo_ou_obra: str = "", sub
     principal = capa.url_da_obra(url_capitulo_ou_obra) if url_capitulo_ou_obra else None
     if principal and (substituir_url or not url_principal(pasta_obra)):
         novo["url"] = principal
+    try:                                                  # o histórico das obras (independente da biblioteca) fica sabendo do cadastro
+        from baixador.biblioteca import historico
+
+        historico.registrar_obra(novo.get("nome") or pasta_obra.name, novo.get("url", ""))
+    except Exception:
+        pass
     if novo == dados or not pasta_obra.is_dir():
         return False
     tmp = pasta_obra / ".obra.tmp"

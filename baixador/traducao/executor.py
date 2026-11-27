@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any, Deque, Dict, List, Optional, Tuple
 
 from baixador import configuracao
+from baixador.biblioteca import historico
 from baixador.nucleo import ambiente, energia
 from baixador.nucleo.erros import ErroBaixador
 from baixador.traducao import config
@@ -638,6 +639,7 @@ class TarefaTraducao:
                 self._item(indice, estado="pronto", etapa="", feitas=ESCALA)
                 self._atualizar_global(indice, 1.0)
                 self._liberar(pasta)
+                historico.anotar_capitulo(pasta, traduzido=True)
                 c = dados.get("contagens") or {}
                 falas += int(dados.get("falas") or 0)
                 revisar += int(c.get("revisar") or 0)

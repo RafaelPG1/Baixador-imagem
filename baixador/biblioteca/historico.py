@@ -5,6 +5,13 @@ então um aparelho com dados velhos nunca sobrescreve o que foi feito depois em 
 - posicoes: {Obra/Cap: {p: página, n: total de páginas, f: fração da página (0–1), t}}
 - lidos:    {Obra/Cap: {v: bool, t}}   (o conjunto de `lidos.json` continua sendo o que a biblioteca consulta)
 - estados:  {Obra: {e: "quero"|"lendo"|"concluida"|"", t}}   (estado da OBRA; não confundir com lido/não lido do capítulo)
+- obras:    {id: ficha da obra} — histórico das obras, INDEPENDENTE da biblioteca (excluir a obra do disco não toca aqui). Não é sincronizado.
+    id (chave do nome, fixa), nome, url (página da obra), site, encontrado/baixado/traduzido/lido (números de capítulo),
+    pos {n: capítulo, p: página, t: de páginas, f: fração}, conhecidos {número: url do capítulo},
+    t_lido, t_atualizado, t_descoberta (ms), situacao "andamento"|"concluida"|"pausada" (+ t_situacao).
+  Regras: números só sobem (encontrado/baixado/traduzido), o mais novo vence (leitura e situação), campo vazio nunca apaga o cheio, e
+  terminar de ler os capítulos disponíveis NUNCA muda a situação: só a pessoa marca "concluida" (`definir_situacao`).
+  Não confundir com `estados` acima (quero ler/lendo/concluída = a leitura da pessoa, não o andamento da obra no site).
 """
 
 from __future__ import annotations
@@ -21,6 +28,7 @@ from baixador.biblioteca import lidos
 
 ARQUIVO = configuracao.DADOS / "historico.json"
 ESTADOS = ("", "quero", "lendo", "concluida")
+SITUACOES = ("andamento", "concluida", "pausada")
 MAX_POSICOES = 2000
 _TRAVA = threading.RLock()
 
@@ -43,7 +51,7 @@ def _rel_ok(rel: Any) -> bool:
 
 
 def _vazio() -> Dict[str, Dict[str, Any]]:
-    return {"posicoes": {}, "lidos": {}, "estados": {}}
+    return {"posicoes": {}, "lidos": {}, "estados": {}, "obras": {}}
 
 
 def ler() -> Dict[str, Dict[str, Any]]:
@@ -161,3 +169,156 @@ def mesclar(cliente: Any) -> Dict[str, Any]:
         if mudou:
             _gravar(d)
     return resumo()
+
+
+# ---- histórico das obras ------------------------------------------------------------------------------------------------------------
+
+MAX_CONHECIDOS = 5000
+
+
+def _num(n: Any) -> Optional[str]:
+    from baixador.biblioteca import organizacao
+
+    return organizacao.normalizar_numero(n)
+
+
+def _maior(a: Optional[str], b: Optional[str]) -> Optional[str]:
+    return b if a is None or (b is not None and float(b) > float(a)) else a
+
+
+def _site(url: str) -> str:
+    from urllib.parse import urlsplit
+
+    try:
+        return (urlsplit(url).hostname or "").removeprefix("www.")
+    except ValueError:
+        return ""
+
+
+def _achar_obra(obras: Dict[str, Any], nome: str, url: str) -> Optional[str]:
+    """Id da ficha da mesma obra: primeiro pela página da obra, depois pelo nome sem acento/pontuação (o mesmo critério da biblioteca)."""
+    from baixador.biblioteca import organizacao
+
+    if url:
+        achada = next((i for i, f in obras.items() if f.get("url") == url), None)
+        if achada:
+            return achada
+    chave = organizacao._chave(nome)
+    return next((i for i, f in obras.items() if chave and organizacao._chave(f.get("nome", "")) == chave), None)
+
+
+def registrar_obra(nome: str = "", url: str = "", *, encontrado: Any = None, baixado: Any = None, traduzido: Any = None, lido: Any = None,
+                   pos: Optional[Dict[str, Any]] = None, conhecidos: Optional[Dict[str, str]] = None, descoberta: bool = False, t: Any = None) -> bool:
+    """Cria ou completa a ficha da obra. Nunca apaga nem rebaixa nada: ver as regras no topo do arquivo. True se gravou."""
+    from baixador.biblioteca import capa, organizacao
+
+    url = (capa.url_da_obra(url) or "") if url else ""
+    nome_url = organizacao._titulo_de_slug(url.rstrip("/").rsplit("/", 1)[-1]) if url else ""
+    nome = organizacao.limpar_nome(nome, 80) if nome else ""
+    if not (nome or nome_url):
+        return False
+    agora = _t(t) or _agora()
+    with _TRAVA:
+        d = ler()
+        obras = d["obras"]
+        id_ = _achar_obra(obras, nome or nome_url, url)
+        antes = json.dumps(obras.get(id_), sort_keys=True) if id_ else ""
+        if id_ is None:
+            id_ = organizacao._chave(nome or nome_url) or _site(url) or "obra"
+            while id_ in obras:                                 # id já usado por outra obra: nunca sobrescreve a ficha
+                id_ += "-2"
+            obras[id_] = {"id": id_, "nome": nome or nome_url, "nome_auto": not nome, "url": "", "site": "", "situacao": "andamento", "conhecidos": {}}
+        f = obras[id_]
+        if nome and (not f.get("nome") or f.get("nome_auto")):
+            f["nome"], f["nome_auto"] = nome, False             # o nome tirado do endereço cede ao nome de verdade
+        if url and not f.get("url"):
+            f["url"], f["site"] = url, _site(url)
+        for campo, valor in (("encontrado", encontrado), ("baixado", baixado), ("traduzido", traduzido)):
+            n = _num(valor)
+            if n is not None:
+                f[campo] = _maior(_num(f.get(campo)), n)
+        if isinstance(conhecidos, dict):
+            c = f.setdefault("conhecidos", {})
+            for k, v in conhecidos.items():
+                k = _num(k)
+                if k is not None and (len(c) < MAX_CONHECIDOS or k in c) and (k not in c or (not c[k] and v)):
+                    c[k] = str(v or "")[:300]
+        n = _num(lido)
+        if n is not None and agora >= f.get("t_lido", 0):        # leitura: o mais novo vence (reler um capítulo antigo é leitura mais nova)
+            f["lido"], f["t_lido"] = n, agora
+            if isinstance(pos, dict) and _pos(pos.get("p"), pos.get("t"), pos.get("f"), agora):
+                f["pos"] = {"n": n, "p": int(pos["p"]), "t": int(pos["t"]), "f": round(float(pos["f"]), 3)}
+            elif f.get("pos", {}).get("n") != n:
+                f.pop("pos", None)
+        if descoberta:
+            f["t_descoberta"] = agora
+        if json.dumps(f, sort_keys=True) != antes:
+            f["t_atualizado"] = max(f.get("t_atualizado", 0), agora)
+            _gravar(d)
+            return True
+        return False
+
+
+def definir_situacao(obra: str, situacao: str, t: Any = None) -> bool:
+    """Marca a obra como andamento/concluída/pausada (decisão da pessoa; nada é deduzido da leitura). `obra` = nome ou id."""
+    if situacao not in SITUACOES or not isinstance(obra, str):
+        return False
+    with _TRAVA:
+        d = ler()
+        id_ = obra if obra in d["obras"] else _achar_obra(d["obras"], obra, "")
+        agora = _t(t) or _agora()
+        if id_ is None or agora < d["obras"][id_].get("t_situacao", 0) or d["obras"][id_].get("situacao") == situacao:
+            return False
+        d["obras"][id_].update(situacao=situacao, t_situacao=agora, t_atualizado=max(d["obras"][id_].get("t_atualizado", 0), agora))
+        _gravar(d)
+        return True
+
+
+def obras() -> list:
+    """Fichas das obras, as lidas há menos tempo primeiro."""
+    return sorted(ler()["obras"].values(), key=lambda f: -max(f.get("t_lido", 0), f.get("t_atualizado", 0)))
+
+
+def da_pasta(pasta: Path) -> Optional[Dict[str, Any]]:
+    """(nome, número, url do capítulo, url da obra) de uma pasta de capítulo da biblioteca; None se não der para saber a obra."""
+    from baixador.biblioteca import capa, obra as dados_obra, organizacao
+
+    pasta = Path(pasta)
+    c = organizacao.descrever_capitulo(pasta, pasta.parent.name)
+    if not c["obra"]:
+        return None
+    url_cap = str(organizacao.ler_meta(pasta, copiar=False).get("url") or "")
+    return {"nome": c["obra"], "numero": c["numero"], "url_cap": url_cap, "url": dados_obra.url_principal(pasta.parent) or capa.url_da_obra(url_cap) or ""}
+
+
+def anotar_capitulo(pasta: Path, **campos: Any) -> bool:
+    """Ponte para quem só tem a pasta do capítulo (download, tradução, leitura): `baixado=True`, `traduzido=True` ou `lido=True` (+ `pos`, `t`)."""
+    try:
+        c = da_pasta(pasta)
+        if c is None or c["numero"] is None:
+            return False
+        extra = {k: c["numero"] for k in ("baixado", "traduzido", "lido") if campos.pop(k, False)}
+        conhecidos = {c["numero"]: c["url_cap"]}
+        return registrar_obra(c["nome"], c["url"], conhecidos=conhecidos, **extra, **campos)
+    except Exception:
+        return False                                              # o histórico é um extra: nunca atrapalha baixar, traduzir ou ler
+
+
+def sincronizar_biblioteca(raiz: Path) -> int:
+    """Passa para o histórico o que a biblioteca já tem (obras de antes deste recurso, pastas copiadas de fora). Só acrescenta. Devolve quantas fichas mudaram."""
+    from baixador.biblioteca import acervo
+
+    mudou = 0
+    posicoes = ler()["posicoes"]
+    for o in acervo.listar(Path(raiz))["obras"]:
+        caps = [c for c in o["capitulos"] if c["numero"] is not None]
+        feitos = lambda campo: max((c["numero"] for c in caps if c[campo]), key=float, default=None)   # noqa: E731
+        baixados = [c["numero"] for c in caps if not c["baixa_incompleta"] and not c["incompleta"]]
+        lida = max((c for c in caps if c["rel"] in posicoes), key=lambda c: posicoes[c["rel"]].get("t", 0), default=None)
+        extra: Dict[str, Any] = {}
+        if lida:
+            v = posicoes[lida["rel"]]
+            extra = {"lido": lida["numero"], "pos": {"p": v.get("p"), "t": v.get("n"), "f": v.get("f")}, "t": v.get("t")}
+        mudou += registrar_obra(o["nome"], o.get("url") or "", baixado=max(baixados, key=float, default=None), traduzido=feitos("traduzido"),
+                                conhecidos={c["numero"]: "" for c in caps}, **extra)
+    return mudou

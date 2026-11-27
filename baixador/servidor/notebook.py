@@ -346,6 +346,8 @@ class Manipulador(BaseHTTPRequestHandler):
             return self._json(200, {"resultados": [{**r, "rotulo": nomes.get(r["rel"]) or r["rel"]} for r in res]})
         if caminho == "/api/historico":
             return self._json(200, historico.resumo())
+        if caminho == "/api/historico/obras":                    # histórico das obras (continua existindo depois de excluir a obra da biblioteca)
+            return self._json(200, {"obras": historico.obras()})
         if caminho == "/api/armazenamento":
             return self._json(200, {**armazenamento.tamanhos(raiz), "orfaos": armazenamento.orfaos(raiz, self._rels_protegidos())})
 
@@ -419,6 +421,8 @@ class Manipulador(BaseHTTPRequestHandler):
             rel = rel.strip("/\\").replace("\\", "/")
             lidos.marcar(rel, bool(dados.get("lido", True)))
             historico.marcar_lido(rel, bool(dados.get("lido", True)))
+            if dados.get("lido", True):
+                historico.anotar_capitulo(pasta_do_capitulo(raiz, rel), lido=True)
             return self._json(200, {"ok": True})
 
         if caminho == "/api/historico/posicao":                # onde a pessoa parou no capítulo (o leitor manda de tempos em tempos)
@@ -426,6 +430,8 @@ class Manipulador(BaseHTTPRequestHandler):
             if not isinstance(rel, str) or pasta_do_capitulo(raiz, rel) is None:
                 return self._negar(400, "Capítulo inválido.")
             gravou = historico.salvar_posicao(rel.strip("/\\").replace("\\", "/"), dados.get("p"), dados.get("n"), dados.get("f"), dados.get("t"))
+            if gravou:                                         # o progresso da obra acompanha a leitura, sem ação manual
+                historico.anotar_capitulo(pasta_do_capitulo(raiz, rel), lido=True, pos={"p": dados.get("p"), "t": dados.get("n"), "f": dados.get("f")}, t=dados.get("t"))
             return self._json(200, {"ok": True, "gravou": gravou})
 
         if caminho == "/api/historico/estado":                 # quero ler / lendo / concluída (da OBRA)
@@ -433,6 +439,11 @@ class Manipulador(BaseHTTPRequestHandler):
             if not obra or "/" in obra or obra.startswith(".") or not (raiz / obra).is_dir() or estado not in historico.ESTADOS:
                 return self._negar(400, "Obra ou estado inválido.")
             historico.definir_estado(obra, estado, dados.get("t"))
+            return self._json(200, {"ok": True})
+
+        if caminho == "/api/historico/situacao":               # andamento / concluída / pausada (da OBRA no site; só a pessoa decide)
+            if not historico.definir_situacao(str(dados.get("obra", "")), str(dados.get("situacao", "")), dados.get("t")):
+                return self._negar(400, "Obra (no histórico) ou situação inválida, ou já está assim.")
             return self._json(200, {"ok": True})
 
         if caminho == "/api/traduzir":
@@ -1092,6 +1103,10 @@ def abrir_interface(abrir_navegador: bool = True) -> int:
             print(f"Aviso (biblioteca): {erro}")
     except Exception as erro:
         print(f"Aviso: não consegui organizar a biblioteca antiga ({erro.__class__.__name__}); nada foi perdido.")
+    try:                                                  # obras que já estão na biblioteca entram no histórico (só acrescenta)
+        historico.sincronizar_biblioteca(PASTA_PADRAO)
+    except Exception as erro:
+        print(f"Aviso: não consegui atualizar o histórico das obras ({erro.__class__.__name__}).")
     try:                                                  # imagens de cada capítulo em Capítulo/img (os .json ficam na raiz do capítulo)
         relatorio = estrutura.mover_imagens_para_img(PASTA_PADRAO)
         if relatorio["capitulos"]:
