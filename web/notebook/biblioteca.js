@@ -68,13 +68,21 @@ function fecharMenu(voltarFoco) {
   if (voltarFoco) btn.focus();
   menuAberto = null;
 }
+/* se o painel não cabe embaixo do botão: abre para cima (quando há espaço) ou rola a página só o necessário para ele aparecer inteiro */
+function posicionarPainel(btn, painel) {
+  painel.classList.remove('acima');
+  const r = painel.getBoundingClientRect(); if (r.bottom <= window.innerHeight - 8) return;
+  const topo = document.querySelector('.topo'), limite = topo ? topo.getBoundingClientRect().bottom : 0;
+  if (btn.getBoundingClientRect().top - 8 - r.height >= limite + 8) { painel.classList.add('acima'); return; }
+  painel.scrollIntoView({block: 'nearest', behavior: 'smooth'});
+}
 function ligarMenu(btn, painel) {
   btn.setAttribute('aria-expanded', 'false');
   btn.addEventListener('click', (ev) => {
     ev.stopPropagation();
     const abrir = painel.hidden;
     fecharMenu(false);
-    if (abrir) { painel.hidden = false; btn.setAttribute('aria-expanded', 'true'); menuAberto = {btn, painel}; const f = painel.querySelector('select, button:not(:disabled), input'); if (f && ev.detail === 0) f.focus(); }
+    if (abrir) { painel.hidden = false; btn.setAttribute('aria-expanded', 'true'); menuAberto = {btn, painel}; posicionarPainel(btn, painel); const f = painel.querySelector('select, button:not(:disabled), input'); if (f && ev.detail === 0) f.focus(); }
   });
   painel.addEventListener('click', (ev) => { if (ev.target.closest('.bib-item') || ev.target.closest('.bib-pop-acoes button')) fecharMenu(false); });
 }

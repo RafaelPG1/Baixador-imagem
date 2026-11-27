@@ -203,56 +203,76 @@
 
 <!-- ============================================================ TRADUÇÕES -->
 <!-- ============================================================ ATUALIZAÇÕES -->
-<section id="pg-atualizacoes" class="pagina" role="tabpanel" aria-labelledby="aba-atualizacoes" hidden>
-  <div class="secao">
-    <div class="secao-cab"><h2>Atualizações</h2><span class="suave">Descobre capítulos novos nas obras da biblioteca. Não baixa nem traduz nada: você escolhe o que baixar.</span></div>
-    <div class="at-barra">
-      <button type="button" id="at-verificar" class="btn principal">Verificar agora</button>
-      <label class="marcar"><input type="checkbox" id="at-periodica"> Verificar periodicamente</label>
-      <label class="marcar">a cada <select id="at-intervalo" aria-label="Intervalo da verificação periódica"><option value="1">1 hora</option><option value="3">3 horas</option><option value="6">6 horas</option><option value="12">12 horas</option><option value="24">24 horas</option></select></label>
-      <label class="marcar"><input type="checkbox" id="at-notificar"> Avisar no navegador quando houver novos</label>
+<section id="pg-atualizacoes" class="pagina au" role="tabpanel" aria-labelledby="aba-atualizacoes" hidden>
+  <header class="au-painel">
+    <div class="au-topo">
+      <div class="au-titulo"><h2>Atualizações</h2><p class="suave">Descobre capítulos novos nas obras da biblioteca. Não baixa nem traduz nada: você escolhe o que baixar.</p></div>
+      <button type="button" id="at-verificar" class="btn principal grande au-verificar"><svg class="au-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg><span id="at-verificar-txt">Verificar agora</span></button>
     </div>
-    <p class="nota" id="at-estado" role="status"></p>
-    <p class="nota">A verificação periódica só roda enquanto o programa estiver aberto. Funciona em sites que mostram a lista de capítulos na página da obra; nos demais a obra aparece como “sem lista”.</p>
-  </div>
-  <div id="at-novos" class="secao"></div>
-  <div id="at-vazio" class="vazio" hidden><strong>Nenhum capítulo novo</strong><span>Use “Verificar agora” para procurar. As obras sem novidades continuam listadas abaixo.</span></div>
-  <details class="secao" id="at-det-obras" open><summary><strong>Obras verificadas</strong> <span class="suave" id="at-qtd"></span></summary><div id="at-obras" class="at-lista"></div></details>
-  <details class="secao"><summary><strong>Histórico de verificações</strong></summary><div id="at-hist" class="at-lista"></div></details>
+    <div class="au-status">
+      <p class="au-estado" id="at-estado" role="status"></p>
+      <div class="au-progresso" id="at-progresso" hidden><i id="at-prog-barra"></i></div>
+    </div>
+    <div class="au-opcoes">
+      <div class="au-opcao">
+        <label class="au-troca"><input type="checkbox" id="at-periodica" class="au-sw"><span>Verificar periodicamente</span></label>
+        <label class="au-intervalo">a cada <select id="at-intervalo" aria-label="Intervalo da verificação periódica"><option value="1">1 hora</option><option value="3">3 horas</option><option value="6">6 horas</option><option value="12">12 horas</option><option value="24">24 horas</option></select></label>
+      </div>
+      <label class="au-opcao au-troca"><input type="checkbox" id="at-notificar" class="au-sw"><span>Avisar no navegador quando houver novos</span></label>
+    </div>
+    <p class="au-info-nota"><svg class="au-ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg><span>A verificação periódica só roda enquanto o programa estiver aberto. Funciona em sites que mostram a lista de capítulos na página da obra; nos demais a obra aparece como “sem lista”.</span></p>
+  </header>
+  <div id="at-novos" class="au-novos"></div>
+  <div id="at-vazio" class="au-vazio" hidden><svg class="au-ic au-grande" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/></svg><strong>Nenhum capítulo novo</strong><span>Use “Verificar agora” para procurar. As obras sem novidades continuam listadas abaixo.</span></div>
+  <details class="au-bloco" id="at-det-obras" open><summary><strong>Obras verificadas</strong> <span class="suave" id="at-qtd"></span><svg class="au-ic au-seta" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></summary><div id="at-obras" class="au-grade"></div></details>
+  <details class="au-bloco"><summary><strong>Histórico de verificações</strong><svg class="au-ic au-seta" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></summary><div id="at-hist" class="au-tempo"></div></details>
 </section>
 
 <!-- ============================================================ PILOTO AUTOMÁTICO -->
-<section id="pg-piloto" class="pagina" role="tabpanel" aria-labelledby="aba-piloto" hidden>
-  <div class="secao">
-    <div class="secao-cab"><h2>Piloto automático</h2><span class="suave">Acompanha as obras que você escolher e leva os capítulos novos até a tradução. Começa desligado e só trabalha quando o navegador de downloads e a fila de tradução estão livres: o que você iniciar à mão tem prioridade e nunca é alterado.</span></div>
-    <div class="at-barra">
-      <span id="pi-chip" class="chip">Desativado</span>
-      <button type="button" id="pi-ativar" class="btn principal">Ativar piloto</button>
-      <button type="button" id="pi-pausar" class="btn" hidden>Pausar</button>
-      <button type="button" id="pi-executar" class="btn" title="Faz uma rodada agora, sem esperar o intervalo" hidden>Executar agora</button>
-      <button type="button" id="pi-cancelar" class="btn" title="Cancela só as tarefas do piloto. Nada é apagado e o que é manual não é tocado." hidden>Cancelar tarefas do piloto</button>
+<section id="pg-piloto" class="pagina au pi" role="tabpanel" aria-labelledby="aba-piloto" hidden>
+  <header class="au-painel pi-painel" id="pi-painel" data-estado="desativado">
+    <div class="au-topo">
+      <div class="au-titulo"><h2>Piloto automático <span id="pi-chip" class="au-selo">Desativado</span></h2><p class="suave">Acompanha as obras que você escolher e leva os capítulos novos até a tradução. Só trabalha quando o navegador de downloads e a fila de tradução estão livres: o que você iniciar à mão tem prioridade e nunca é alterado.</p></div>
+      <div class="pi-acoes">
+        <button type="button" id="pi-pausar" class="btn grande" hidden>Pausar</button>
+        <button type="button" id="pi-executar" class="btn grande" title="Faz uma rodada agora, sem esperar o intervalo" hidden>Executar agora</button>
+        <button type="button" id="pi-ativar" class="btn principal grande au-verificar"><svg class="au-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v9"/><path d="M6.4 6.6a8 8 0 1 0 11.2 0"/></svg><span id="pi-ativar-txt">Ativar piloto</span></button>
+      </div>
     </div>
-    <p class="nota" id="pi-estado" role="status"></p>
-    <div id="pi-aviso" class="faixa aviso" hidden></div>
+    <div class="au-status">
+      <p class="au-estado" id="pi-estado" role="status"></p>
+      <div class="au-progresso pi-indet" id="pi-progresso" hidden><i></i></div>
+      <div id="pi-aviso" class="faixa aviso" hidden></div>
+    </div>
+    <p class="au-info-nota"><svg class="au-ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg><span><span id="pi-motor"></span> Nunca sobrescreve uma tradução existente, nunca baixa de novo o que já está na biblioteca e nunca apaga nada. O download abre uma janela do navegador do programa e respeita o intervalo entre acessos ao site.</span></p>
+    <button type="button" id="pi-cancelar" class="btn perigo pi-cancelar" title="Cancela só as tarefas do piloto. Nada é apagado e o que é manual não é tocado." hidden>Cancelar tarefas do piloto</button>
+  </header>
+  <div class="au-novos">
+    <div class="au-cab"><h2>O que automatizar</h2></div>
+    <div class="pi-etapas">
+      <div class="pi-etapa">
+        <label class="au-troca"><input type="checkbox" id="pi-et-verificar" class="au-sw"><strong>Verificar</strong></label>
+        <p class="suave">Procura capítulos novos nas obras acompanhadas.</p>
+        <label class="pi-campo">a cada <select id="pi-intervalo" aria-label="Intervalo do piloto"><option value="30">30 min</option><option value="60">1 hora</option><option value="180">3 horas</option><option value="360">6 horas</option><option value="720">12 horas</option><option value="1440">24 horas</option></select></label>
+      </div>
+      <div class="pi-etapa">
+        <label class="au-troca"><input type="checkbox" id="pi-et-baixar" class="au-sw"><strong>Baixar</strong></label>
+        <p class="suave">Baixa os capítulos novos para a biblioteca.</p>
+        <label class="pi-campo">até <input type="number" id="pi-lim-baixar" min="1" max="20" aria-label="Máximo de capítulos baixados por execução"> por execução</label>
+      </div>
+      <div class="pi-etapa">
+        <label class="au-troca"><input type="checkbox" id="pi-et-traduzir" class="au-sw"><strong>Traduzir</strong></label>
+        <p class="suave">Prepara os textos baixados para tradução.</p>
+        <label class="pi-campo">até <input type="number" id="pi-lim-traduzir" min="1" max="20" aria-label="Máximo de capítulos traduzidos por execução"> por execução</label>
+      </div>
+    </div>
   </div>
-  <div class="secao">
-    <div class="secao-cab"><h2>O que automatizar</h2></div>
-    <div class="at-barra">
-      <label class="marcar"><input type="checkbox" id="pi-et-verificar"> Verificar capítulos novos</label>
-      <label class="marcar"><input type="checkbox" id="pi-et-baixar"> Baixar os novos</label>
-      <label class="marcar"><input type="checkbox" id="pi-et-traduzir"> Traduzir os baixados</label>
-    </div>
-    <div class="at-barra">
-      <label class="marcar">Máx. de capítulos baixados por execução <input type="number" id="pi-lim-baixar" min="1" max="20" style="width:60px"></label>
-      <label class="marcar">Máx. de capítulos traduzidos por execução <input type="number" id="pi-lim-traduzir" min="1" max="20" style="width:60px"></label>
-      <label class="marcar">Verificar a cada <select id="pi-intervalo" aria-label="Intervalo do piloto"><option value="30">30 min</option><option value="60">1 hora</option><option value="180">3 horas</option><option value="360">6 horas</option><option value="720">12 horas</option><option value="1440">24 horas</option></select></label>
-    </div>
-    <p class="nota" id="pi-motor"></p>
-    <p class="nota">Nunca sobrescreve uma tradução existente, nunca baixa de novo o que já está na biblioteca e nunca apaga nada. O download usa o navegador do programa (abre uma janela) e respeita o intervalo entre acessos ao site.</p>
+  <details class="au-bloco" open><summary><strong>Obras acompanhadas</strong> <span class="suave" id="pi-qtd"></span><svg class="au-ic au-seta" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></summary><div id="pi-obras" class="au-grade"></div></details>
+  <div class="au-novos">
+    <div class="au-cab"><h2>Fila do piloto</h2></div>
+    <div id="pi-fila" class="au-grade"></div>
   </div>
-  <details class="secao" open><summary><strong>Obras acompanhadas</strong> <span class="suave" id="pi-qtd"></span></summary><div id="pi-obras" class="at-lista"></div></details>
-  <div class="secao"><div class="secao-cab"><h2>Fila do piloto</h2></div><div id="pi-fila" class="at-lista"></div></div>
-  <details class="secao"><summary><strong>Histórico de atividade</strong></summary><div id="pi-hist" class="at-lista"></div></details>
+  <details class="au-bloco"><summary><strong>Histórico de atividade</strong><svg class="au-ic au-seta" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></summary><div id="pi-hist" class="au-tempo"></div></details>
 </section>
 
 <section id="pg-traducoes" class="pagina" role="tabpanel" aria-labelledby="aba-traducoes" hidden>
