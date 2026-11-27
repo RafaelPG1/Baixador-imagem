@@ -462,3 +462,17 @@ figure.mini .abaixo { display: block; width: 100%; border: 0; border-top: 1px so
 .bib-continuar { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 10px 14px; margin-bottom: 8px; border-radius: 10px; border: 1px solid var(--borda, #2a3544); background: var(--painel, #18202b); }
 
 .sync-hist { font-size: .7rem; color: var(--suave, #888); margin-left: 10px; }
+
+/* aba Atualizações */
+.at-barra { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
+.at-barra select { font: inherit; padding: 4px 6px; }
+.at-lista { display: grid; gap: 6px; margin-top: 10px; }
+.at-obra { border: 1px solid var(--borda); border-radius: var(--raio); background: var(--painel); padding: 10px 14px; display: grid; gap: 8px; }
+.at-obra-cab { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.at-obra-cab strong { flex: 1 1 200px; }
+.at-caps { display: grid; gap: 4px; max-height: 320px; overflow: auto; }
+.at-cap { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: .9rem; }
+.at-cap .num { min-width: 64px; font-variant-numeric: tabular-nums; }
+.at-linha { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; font-size: .9rem; padding: 4px 0; border-bottom: 1px solid var(--borda); }
+.at-linha .nome { flex: 1 1 180px; }
+.at-erro { color: var(--erro); }

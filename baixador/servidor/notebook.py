@@ -18,6 +18,7 @@ import json
 import os
 import secrets
 import subprocess
+import threading
 import sys
 import time
 import webbrowser
@@ -29,7 +30,7 @@ from urllib.parse import parse_qs, quote, unquote, urlsplit
 from baixador.biblioteca import acervo as biblioteca
 from baixador.traducao import config, edicoes, executor, legado, web_ia
 from baixador.navegador import navegadores
-from baixador.biblioteca import armazenamento, capa as capa_obra, busca, estrutura, exportar, historico, lidos, lixeira, obra as dados_obra, organizacao
+from baixador.biblioteca import armazenamento, capa as capa_obra, busca, estrutura, exportar, historico, lidos, lixeira, obra as dados_obra, organizacao, verificacao
 from baixador.servidor.base import (
     CSS, ESTATICOS_LEITOR, ESTATICOS_VERIFICACAO, JS, ServidorSilencioso, ler_capa, ler_web, pagina_leitor, web_em_cache,
 )
@@ -56,6 +57,7 @@ ESTATICOS = {
     "/estatico/armazenamento.js": ("notebook/armazenamento.js", JS),
     "/estatico/biblioteca.js": ("notebook/biblioteca.js", JS),
     "/estatico/celular.js": ("notebook/celular.js", JS),
+    "/estatico/atualizacoes.js": ("notebook/atualizacoes.js", JS),
     **ESTATICOS_LEITOR,
     **ESTATICOS_VERIFICACAO,
 }
@@ -324,6 +326,9 @@ class Manipulador(BaseHTTPRequestHandler):
         if caminho == "/api/biblioteca":
             return self._json(200, biblioteca.listar(raiz) if raiz.is_dir() else {"obras": [], "versao": ""})
 
+        if caminho == "/api/verificacao":                        # aba Atualizações: novidades por obra, configuração, histórico
+            return self._json(200, verificacao.painel(raiz) if raiz.is_dir() else {"config": verificacao.ler()["config"], "ultima": 0, "andamento": {}, "obras": [], "historico": []})
+
         if caminho == "/api/versao":
             return self._json(200, {"versao": biblioteca.versao(raiz) if raiz.is_dir() else ""})
 
@@ -439,6 +444,25 @@ class Manipulador(BaseHTTPRequestHandler):
             if not obra or "/" in obra or obra.startswith(".") or not (raiz / obra).is_dir() or estado not in historico.ESTADOS:
                 return self._negar(400, "Obra ou estado inválido.")
             historico.definir_estado(obra, estado, dados.get("t"))
+            return self._json(200, {"ok": True})
+
+        if caminho == "/api/verificacao/iniciar":                # só descobre: nada é baixado nem traduzido
+            nomes = dados.get("obras")
+            if nomes is not None and not (isinstance(nomes, list) and all(isinstance(n, str) for n in nomes)):
+                return self._negar(400, "Lista de obras inválida.")
+            if verificacao._andamento.get("rodando"):
+                return self._negar(409, "Já há uma verificação em andamento.")
+            threading.Thread(target=verificacao.verificar, args=(self.server.raiz,), kwargs={"so": nomes, "forcar": bool(dados.get("forcar"))},  # type: ignore[attr-defined]
+                             daemon=True, name="verificacao").start()
+            return self._json(200, {"ok": True})
+        if caminho == "/api/verificacao/config":
+            c = dados
+            if c.get("intervalo_h") is not None and c["intervalo_h"] not in verificacao.INTERVALOS_H:
+                return self._negar(400, "Intervalo inválido.")
+            return self._json(200, {"config": verificacao.definir_config(c.get("periodica"), c.get("intervalo_h"), c.get("desligadas"))})
+        if caminho == "/api/verificacao/dispensar":
+            if not verificacao.dispensar(str(dados.get("obra", "")), dados.get("numeros")):
+                return self._negar(404, "Obra sem novidades registradas.")
             return self._json(200, {"ok": True})
 
         if caminho == "/api/historico/situacao":               # andamento / concluída / pausada (da OBRA no site; só a pessoa decide)
@@ -1073,6 +1097,7 @@ def criar_servidor(
     servidor.daemon_threads = True
     numero = servidor.server_address[1]
     servidor.raiz = Path(raiz) if raiz is not None else PASTA_PADRAO  # type: ignore[attr-defined]
+    verificacao.iniciar_periodico(servidor.raiz)           # relógio da verificação periódica (desligada até a pessoa ligar)
     servidor.manual = manual if manual is not None else SessaoManual()  # type: ignore[attr-defined]
     servidor.traducao = TarefaTraducao()  # type: ignore[attr-defined]
     if raiz is None:                                      # só a biblioteca de verdade guarda a fila (testes e bibliotecas de teste não)

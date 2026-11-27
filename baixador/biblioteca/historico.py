@@ -272,6 +272,13 @@ def registrar_obra(nome: str = "", url: str = "", *, encontrado: Any = None, bai
         return False
 
 
+def ficha(nome: str, url: str = "") -> Optional[Dict[str, Any]]:
+    """Ficha da obra (cópia) pelo endereço ou pelo nome; None se ainda não existe."""
+    obras = ler()["obras"]
+    id_ = _achar_obra(obras, nome, url)
+    return dict(obras[id_]) if id_ else None
+
+
 def definir_situacao(obra: str, situacao: str, t: Any = None) -> bool:
     """Marca a obra como andamento/concluída/pausada (decisão da pessoa; nada é deduzido da leitura). `obra` = nome ou id."""
     if situacao not in SITUACOES or not isinstance(obra, str):

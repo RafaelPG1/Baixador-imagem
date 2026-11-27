@@ -58,8 +58,14 @@
         const e = estado.get(c.rel), l = h('label', 'webia-cap');
         const i = h('input'); i.type = 'checkbox'; i.checked = marcados.has(c.rel);
         i.addEventListener('change', () => { if (i.checked) marcados.add(c.rel); else marcados.delete(c.rel); resumo(); });
-        const t = !e?.textos && emFila.has(c.rel) ? 'preparando…' : e?.textos ? `${e.importados}/${e.textos} traduzidos` + (e.completo ? ' · completo' : e.importados ? ` · parcial, faltam ${e.textos - e.importados}` : ' · preparado') : (e?.incompleta ? `${e.incompleta} fala(s) com erro · preparar de novo` : 'textos não preparados');
-        l.append(i, h('span', 'nome', c.numero != null && c.numero !== '' ? 'Cap. ' + c.numero : c.rotulo), h('span', 'est' + (e?.textos ? (e.completo ? ' ok' : ' ativo') : ''), t));
+        // "traduzido" só existe na Biblioteca, quando a tradução já está aplicada e dá para ler. Aqui a lista é de capítulos que ainda NÃO estão prontos:
+        // o que chegou da IA são "textos recebidos"; enquanto o programa limpa os balões e coloca o texto, o capítulo está "carregando".
+        const carregando = emFila.has(c.rel);
+        const t = !e?.textos && carregando ? 'preparando…'
+          : e?.textos ? (e.completo ? (carregando ? `Carregando tradução… (${e.importados}/${e.textos} textos recebidos)` : `${e.importados}/${e.textos} textos recebidos · falta aplicar nas imagens`)
+            : `${e.importados}/${e.textos} textos recebidos` + (e.importados ? ` · parcial, faltam ${e.textos - e.importados}` : ' · preparado'))
+          : (e?.incompleta ? `${e.incompleta} fala(s) com erro · preparar de novo` : 'textos não preparados');
+        l.append(i, h('span', 'nome', c.numero != null && c.numero !== '' ? 'Cap. ' + c.numero : c.rotulo), h('span', 'est' + (e?.textos || carregando ? ' ativo' : ''), t));
         return l;
       }));
       lista.scrollTop = topo; resumo();
@@ -162,7 +168,7 @@
       caps.forEach((c) => {
         if (c.original_reenviado) { linhasR.push(['erro', `${c.rotulo}: REJEITADO — o texto colado é o original em inglês, sem tradução (${c.iguais_ao_original.length} falas iguais ao original). Nada deste capítulo foi importado.`]); return; }
         const ok = c.completo && !c.desconhecidos.length && !c.duplicados.length && !c.quebrados.length && !c.vazios.length;
-        linhasR.push([ok ? 'ok' : (c.completo ? 'aviso' : 'erro'), `${c.rotulo}: ${c.ja_importados + c.novas}/${c.esperados} traduzidos${gravou ? '' : ` (${c.novas} novos)`}` + (c.completo ? ' · todas as falas têm tradução' : ` · faltam ${c.qtd_faltam}`)]);
+        linhasR.push([ok ? 'ok' : (c.completo ? 'aviso' : 'erro'), `${c.rotulo}: ${c.ja_importados + c.novas}/${c.esperados} textos recebidos${gravou ? '' : ` (${c.novas} novos)`}` + (c.completo ? ' · todas as falas recebidas (o capítulo só fica “traduzido” quando terminar de carregar)' : ` · faltam ${c.qtd_faltam}`)]);
         const det = (rot, v) => { if (v.length) linhasR.push(['nota', `   ${rot}: ${v.join(', ')}`]); };
         linhasR.push([c.faltam.length ? 'erro' : 'nota', '   ' + c.mensagem]);
         if (c.ausentes.length) linhasR.push(['nota ausentes', '   Identificadores que faltam:\n' + c.ausentes.join(c.ausentes.length > 30 ? ' ' : '\n')]);

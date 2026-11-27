@@ -15,6 +15,7 @@
     <nav class="abas" role="tablist" aria-label="Seções">
       <button class="aba" role="tab" id="aba-baixar" data-pagina="baixar" aria-selected="true" aria-controls="pg-baixar">Baixar imagens</button>
       <button class="aba" role="tab" id="aba-biblioteca" data-pagina="biblioteca" aria-selected="false" aria-controls="pg-biblioteca">Biblioteca</button>
+      <button class="aba" role="tab" id="aba-atualizacoes" data-pagina="atualizacoes" aria-selected="false" aria-controls="pg-atualizacoes">Atualizações<span id="aba-at-ponto" class="ponto" hidden aria-label="há capítulos novos"></span></button>
       <button class="aba" role="tab" id="aba-traducoes" data-pagina="traducoes" aria-selected="false" aria-controls="pg-traducoes">Traduções<span id="aba-trad-ponto" class="ponto" hidden aria-label="traduzindo agora"></span></button>
       <button class="aba" role="tab" id="aba-celular" data-pagina="celular" aria-selected="false" aria-controls="pg-celular">Leitura pelo celular</button>
     </nav>
@@ -200,6 +201,25 @@
 </section>
 
 <!-- ============================================================ TRADUÇÕES -->
+<!-- ============================================================ ATUALIZAÇÕES -->
+<section id="pg-atualizacoes" class="pagina" role="tabpanel" aria-labelledby="aba-atualizacoes" hidden>
+  <div class="secao">
+    <div class="secao-cab"><h2>Atualizações</h2><span class="suave">Descobre capítulos novos nas obras da biblioteca. Não baixa nem traduz nada: você escolhe o que baixar.</span></div>
+    <div class="at-barra">
+      <button type="button" id="at-verificar" class="btn principal">Verificar agora</button>
+      <label class="marcar"><input type="checkbox" id="at-periodica"> Verificar periodicamente</label>
+      <label class="marcar">a cada <select id="at-intervalo" aria-label="Intervalo da verificação periódica"><option value="1">1 hora</option><option value="3">3 horas</option><option value="6">6 horas</option><option value="12">12 horas</option><option value="24">24 horas</option></select></label>
+      <label class="marcar"><input type="checkbox" id="at-notificar"> Avisar no navegador quando houver novos</label>
+    </div>
+    <p class="nota" id="at-estado" role="status"></p>
+    <p class="nota">A verificação periódica só roda enquanto o programa estiver aberto. Funciona em sites que mostram a lista de capítulos na página da obra; nos demais a obra aparece como “sem lista”.</p>
+  </div>
+  <div id="at-novos" class="secao"></div>
+  <div id="at-vazio" class="vazio" hidden><strong>Nenhum capítulo novo</strong><span>Use “Verificar agora” para procurar. As obras sem novidades continuam listadas abaixo.</span></div>
+  <details class="secao" id="at-det-obras" open><summary><strong>Obras verificadas</strong> <span class="suave" id="at-qtd"></span></summary><div id="at-obras" class="at-lista"></div></details>
+  <details class="secao"><summary><strong>Histórico de verificações</strong></summary><div id="at-hist" class="at-lista"></div></details>
+</section>
+
 <section id="pg-traducoes" class="pagina" role="tabpanel" aria-labelledby="aba-traducoes" hidden>
   <div class="secao">
     <div class="secao-cab"><h2>Traduções</h2><span class="suave">Acompanhe o que está sendo traduzido agora. Para começar uma tradução, use a Biblioteca ou a opção automática da aba Baixar.</span></div>
@@ -312,5 +332,6 @@
 <script defer src="/estatico/armazenamento.js"></script>
 <script defer src="/estatico/busca.js"></script>
 <script defer src="/estatico/celular.js"></script>
+<script defer src="/estatico/atualizacoes.js"></script>
 </body>
 </html>
