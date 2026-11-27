@@ -23,6 +23,7 @@ def main() -> None:
     html = (ORIGEM / "leitor.html").read_text(encoding="utf-8")
     html = trocar(html, 'href="/estatico/leitor.css"', 'href="leitor.css"')
     html = trocar(html, '<script src="/estatico/layout.js"></script>', '<script src="layout.js"></script>')
+    html = trocar(html, '<script src="/estatico/sincronia.js"></script>', '<script src="sincronia.js"></script>')
     html = trocar(html, '<script src="/estatico/leitor.js"></script>', '<script src="leitor-app.js"></script>\n<script src="leitor.js"></script>')
     (DESTINO / "leitor.html").write_text(html, encoding="utf-8")
     for nome in ("layout.js", "leitor.js", "leitor.css"):

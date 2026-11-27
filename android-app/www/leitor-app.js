@@ -12,6 +12,13 @@
   function guardar(k, v) { try { localStorage.setItem(k, v); } catch (_) {} }
   function cfg() { try { var c = JSON.parse(lembrar(CHAVE_CFG) || 'null'); return c && c.base && c.chave ? c : null; } catch (_) { return null; } }
 
+  /* histórico: o leitor (leitor.js) manda a posição ao notebook enquanto a pessoa lê; aqui só entra a chave */
+  window.LEITOR_ENVIAR = function (corpo) {
+    var c = cfg(); if (!c) return Promise.reject(new Error('sem notebook'));
+    return nativoFetch(c.base + '/api/app/sincronia', { method: 'POST', headers: { Authorization: 'Bearer ' + c.chave, 'Content-Type': 'application/json' }, body: JSON.stringify(corpo), cache: 'no-store' })
+      .then(function (r) { return r.ok ? r.json() : Promise.reject(new Error(String(r.status))); });
+  };
+
   /* ---------- banco local (o mesmo do app.js) ---------- */
   var _bd = null;
   function bd() {

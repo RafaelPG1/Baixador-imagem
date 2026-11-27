@@ -30,7 +30,7 @@ from urllib.parse import parse_qs, quote, unquote, urlencode, urlsplit
 
 from baixador.biblioteca import acervo as biblioteca
 from baixador.biblioteca import exportar, historico
-from baixador.biblioteca.capitulo import dados_do_capitulo
+from baixador.biblioteca.capitulo import dados_do_capitulo, pasta_do_capitulo
 from baixador.servidor.base import CSS, ESTATICOS_LEITOR, JS, TIPOS_IMAGEM, ServidorSilencioso, ler_capa, ler_web, pagina_leitor
 
 PORTA_PADRAO = 8765
@@ -181,13 +181,14 @@ class _Manipulador(BaseHTTPRequestHandler):
             return
         try:
             tamanho = int(self.headers.get("Content-Length", "0"))
-            if not 0 < tamanho <= 262144:
+            if not 0 < tamanho <= 1048576:
                 raise ValueError
             dados = json.loads(self.rfile.read(tamanho))
         except (ValueError, OSError):
             self.close_connection = True
             return self._json(400, {"erro": "Histórico inválido."})
-        self._json(200, historico.mesclar(dados))
+        raiz = self.server.raiz  # type: ignore[attr-defined]
+        self._json(200, historico.mesclar(dados, lambda rel: pasta_do_capitulo(raiz, rel) if isinstance(rel, str) else None))
 
     def do_OPTIONS(self) -> None:
         """Pré-verificação CORS do app Android (não carrega dados nem exige chave); de qualquer outra origem, 405."""

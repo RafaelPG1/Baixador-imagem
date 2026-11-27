@@ -314,6 +314,13 @@
     if (window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 2) { p = total; f = 1; }   // chegou ao fim: capítulo terminado
     return { p: p, n: total, f: Math.round(f * 1000) / 1000 };
   }
+  var sincLeitor = null;
+  function sincronizarLeitura(forcar) {                               // celular/app: leva a posição ao notebook enquanto lê (sem botão; no máx. 1 envio por 8 s)
+    if (tok || !window.Sincronia) return;
+    sincLeitor = sincLeitor || window.Sincronia.criar(localStorage);
+    var enviar = window.LEITOR_ENVIAR || function (c) { return fetch('/api/app/sincronia', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(c) }).then(function (r) { return r.ok ? r.json() : Promise.reject(new Error(String(r.status))); }); };
+    sincLeitor.sincronizar(enviar, forcar).catch(function () {});
+  }
   var ultimaGravada = null;
   function gravarPosicao(rapido) {
     var a = posicaoAtual(); if (!a || !relCanonico || (window.scrollY === 0 && a.p === 1)) return;
@@ -321,7 +328,7 @@
     ultimaGravada = a;
     var t = Date.now();
     if (tok) fetch(api('/api/historico/posicao'), { method: 'POST', keepalive: !!rapido, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rel: relCanonico, p: a.p, n: a.n, f: a.f, t: t }) }).catch(function () { ultimaGravada = null; });
-    else { var h = histLocal(); h.posicoes = h.posicoes || {}; h.posicoes[relCanonico] = { p: a.p, n: a.n, f: a.f, t: t }; try { localStorage.setItem(HIST, JSON.stringify(h)); } catch (_) {} }
+    else { var h = histLocal(); h.posicoes = h.posicoes || {}; h.posicoes[relCanonico] = { p: a.p, n: a.n, f: a.f, t: t }; try { localStorage.setItem(HIST, JSON.stringify(h)); } catch (_) {} sincronizarLeitura(!!rapido); }
   }
   var tPos = 0;
   window.addEventListener('scroll', function () { clearTimeout(tPos); tPos = setTimeout(gravarPosicao, 3000); }, { passive: true });   // só quando a rolagem para por 3 s

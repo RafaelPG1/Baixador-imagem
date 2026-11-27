@@ -22,6 +22,7 @@ ESTATICOS_LEITOR: Dict[str, Tuple[str, str]] = {
     "/estatico/layout.js": ("leitor/layout.js", JS),
     "/estatico/leitor.css": ("leitor/leitor.css", CSS),
     "/estatico/leitor.js": ("leitor/leitor.js", JS),
+    "/estatico/sincronia.js": ("compartilhado/sincronia.js", JS),
     "/estatico/comic-neue-700.woff2": ("compartilhado/fontes/comic-neue-700.woff2", FONTE),   # Comic Neue Bold (OFL), embutida no leitor
 }
 ESTATICOS_VERIFICACAO: Dict[str, Tuple[str, str]] = {      # leitura da biblioteca (verificação): só o servidor do notebook entrega

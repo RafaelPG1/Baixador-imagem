@@ -460,3 +460,5 @@ figure.mini .abaixo { display: block; width: 100%; border: 0; border-top: 1px so
 .capa-estado { align-self: flex-start; margin: 2px 0; padding: 0 8px; border-radius: 999px; font-size: .72rem; font-weight: 600; background: var(--painel, #18202b); border: 1px solid var(--borda, #2a3544); color: var(--suave, #9aa8ba); }
 .bib-estado { min-height: 40px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--borda, #2a3544); background: var(--painel, #18202b); color: inherit; font: inherit; }
 .bib-continuar { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 10px 14px; margin-bottom: 8px; border-radius: 10px; border: 1px solid var(--borda, #2a3544); background: var(--painel, #18202b); }
+
+.sync-hist { font-size: .7rem; color: var(--suave, #888); margin-left: 10px; }

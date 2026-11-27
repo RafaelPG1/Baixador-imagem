@@ -397,16 +397,17 @@
   /* ---------------- histórico de leitura e estado das obras (sincronizados com o notebook; o mais novo vence) ---------------- */
   var H = window.Sincronia.criar(localStorage);
   function SUFIXO_COMPACTO() { return lembrar('compacto') === '1' ? '&compacto=1' : ''; }   // opcional: imagens menores (WebP ~1080 px); o padrão é o original
+  async function enviarSync(corpo) {
+    if (!cfg()) throw new Error('sem notebook');
+    var r = await fetchAuth('/api/app/sincronia', { limite: 15000, tentativas: 1, metodo: 'POST', corpo: JSON.stringify(corpo) });
+    return r.json();
+  }
   async function sincronizar(forcar) {                          // sem rede ou sem notebook: o histórico local segue valendo e vai na próxima
     if (!cfg()) return;
-    try {
-      await H.sincronizar(async function (corpo) {
-        var r = await fetchAuth('/api/app/sincronia', { limite: 15000, tentativas: 1, metodo: 'POST', corpo: JSON.stringify(corpo) });
-        return r.json();
-      }, forcar);
-    } catch (_) {}
+    try { await H.sincronizar(enviarSync, forcar); } catch (_) {}
   }
-  document.addEventListener('visibilitychange', function () { if (!document.hidden) sincronizar(); });
+  H.aoMudarEstado(function (e) { var x = $('sync-hist'); if (x) x.textContent = cfg() ? window.Sincronia.TEXTO_ESTADO[e] : ''; });
+  H.automatico(enviarSync);                                      // sem botões: ao abrir, ao voltar ao app, ao reconectar e a cada 20 s (só com o app visível)
   var atualizacaoVerificada = false;
   function avisoAtualizacao(eu, tela) {                         // uma conferência por abertura do app; só aparece se houver versão nova de verdade
     function pintar() {

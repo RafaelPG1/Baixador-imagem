@@ -130,3 +130,5 @@ a.cap { flex: 1; min-width: 0; display: grid; gap: 3px; padding: 12px 14px; colo
 .campo-texto { width: 100%; min-height: 96px; padding: 10px 12px; border: 1px solid var(--borda); border-radius: 12px; background: var(--fundo); color: var(--texto); font: .85rem/1.4 ui-monospace, monospace; resize: vertical; }
 .barra-obra { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; margin-bottom: 10px; }
 .topo-acoes { display: flex; gap: 8px; }
+
+.sync-hist { font-size: .7rem; color: var(--suave); margin-left: 10px; }

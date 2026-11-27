@@ -138,19 +138,22 @@ def resumo() -> Dict[str, Any]:
     d = ler()
     lidos_atuais = lidos.todos()
     marcas = {rel: {"v": rel in lidos_atuais, "t": d["lidos"].get(rel, {}).get("t", 0)} for rel in set(lidos_atuais) | set(d["lidos"])}
-    return {"posicoes": d["posicoes"], "lidos": marcas, "estados": d["estados"], "ultima": ultima(d)}
+    return {"posicoes": d["posicoes"], "lidos": marcas, "estados": d["estados"], "ultima": ultima(d), "obras": {i: _para_sincronia(f) for i, f in d["obras"].items()}}
 
 
-def mesclar(cliente: Any) -> Dict[str, Any]:
-    """Junta o histórico enviado por um aparelho com o do notebook (item a item, o mais novo vence) e devolve o resultado."""
+def mesclar(cliente: Any, resolver: Any = None) -> Dict[str, Any]:
+    """Junta o histórico enviado por um aparelho com o do notebook (item a item, o mais novo vence) e devolve o resultado.
+    `resolver(rel)` → pasta do capítulo (ou None): com ele, a leitura vinda do aparelho também atualiza a ficha da obra no notebook."""
     cliente = cliente if isinstance(cliente, dict) else {}
     with _TRAVA:
         d = ler()
         mudou = False
+        leituras = []                                               # (rel, posição, lido) aceitos agora, para a ficha da obra
         for rel, v in (cliente.get("posicoes") or {}).items() if isinstance(cliente.get("posicoes"), dict) else []:
             novo = _pos(v.get("p"), v.get("n"), v.get("f"), v.get("t")) if isinstance(v, dict) and _rel_ok(rel) else None
             if novo and novo["t"] > d["posicoes"].get(rel, {}).get("t", 0):
                 d["posicoes"][rel] = novo
+                leituras.append((rel, novo))
                 mudou = True
         atuais = lidos.todos()
         for rel, v in (cliente.get("lidos") or {}).items() if isinstance(cliente.get("lidos"), dict) else []:
@@ -166,8 +169,18 @@ def mesclar(cliente: Any) -> Dict[str, Any]:
             if isinstance(v, dict) and v.get("e") in ESTADOS and _t(v.get("t")) > d["estados"].get(obra, {}).get("t", 0) and "/" not in str(obra) and 0 < len(str(obra)) <= 200:
                 d["estados"][obra] = {"e": v["e"], "t": _t(v.get("t"))}
                 mudou = True
+        fichas = cliente.get("obras")
+        for v in fichas.values() if isinstance(fichas, dict) else []:
+            mudou = _mesclar_obra(d["obras"], v) or mudou
         if mudou:
             _gravar(d)
+        for rel, pos in leituras if callable(resolver) else []:
+            try:
+                pasta = resolver(rel)
+                if pasta:
+                    anotar_capitulo(pasta, lido=True, pos={"p": pos["p"], "t": pos["n"], "f": pos["f"]}, t=pos["t"])
+            except Exception:
+                pass                                                 # a ficha é um extra: a posição já foi salva
     return resumo()
 
 
@@ -322,3 +335,82 @@ def sincronizar_biblioteca(raiz: Path) -> int:
         mudou += registrar_obra(o["nome"], o.get("url") or "", baixado=max(baixados, key=float, default=None), traduzido=feitos("traduzido"),
                                 conhecidos={c["numero"]: "" for c in caps}, **extra)
     return mudou
+
+
+# ---- sincronia da ficha das obras ---------------------------------------------------------------------------------------------------
+
+def _para_sincronia(f: Dict[str, Any]) -> Dict[str, Any]:
+    """Ficha como vai pela rede: `conhecidos` vira texto compacto de faixas ("1-120,121.5"), sem as URLs (o notebook já as tem)."""
+    nums = sorted(f.get("conhecidos", {}), key=float)
+    ints = sorted(int(n) for n in nums if n.isdigit())
+    faixas, i = [], 0
+    while i < len(ints):
+        j = i
+        while j + 1 < len(ints) and ints[j + 1] == ints[j] + 1:
+            j += 1
+        faixas.append(str(ints[i]) if i == j else f"{ints[i]}-{ints[j]}")
+        i = j + 1
+    return {**f, "conhecidos": ",".join(faixas + [n for n in nums if not n.isdigit()])}
+
+
+def _de_faixas(texto: Any) -> list:
+    saida: list = []
+    for parte in str(texto or "").split(",")[:MAX_CONHECIDOS]:
+        a, _, b = parte.strip().partition("-")
+        if b.isdigit() and a.isdigit() and 0 <= int(b) - int(a) < MAX_CONHECIDOS:
+            saida += range(int(a), int(b) + 1)
+        elif _num(parte.strip()) is not None:
+            saida.append(parte.strip())
+    return [n for n in map(_num, saida) if n is not None][:MAX_CONHECIDOS]
+
+
+def _mesclar_obra(obras: Dict[str, Any], v: Any) -> bool:
+    """Junta a ficha de um aparelho com a do notebook, campo a campo e SEM apagar nada: números só sobem, o mais novo vence (leitura, situação),
+    conhecidos se somam, campo vazio nunca apaga o cheio. Idempotente: receber de volta o que acabou de mandar não muda nada (sem ciclos).
+    Só lê os campos conhecidos (e valida cada um): lixo na rede não vira dado."""
+    from baixador.biblioteca import capa, organizacao
+
+    if not isinstance(v, dict):
+        return False
+    url = (capa.url_da_obra(str(v.get("url") or "")) or "")
+    nome = organizacao.limpar_nome(str(v.get("nome") or ""), 80)
+    auto = bool(v.get("nome_auto"))
+    if not (nome or url):
+        return False
+    id_ = _achar_obra(obras, nome, url)
+    novo = id_ is None
+    if novo:
+        id_ = organizacao._chave(nome) or _site(url) or "obra"
+        while id_ in obras:
+            id_ += "-2"
+        obras[id_] = {"id": id_, "nome": nome or organizacao._titulo_de_slug(url.rstrip("/").rsplit("/", 1)[-1]), "nome_auto": auto or not nome,
+                      "url": "", "site": "", "situacao": "andamento", "conhecidos": {}}
+    f = obras[id_]
+    antes = json.dumps(f, sort_keys=True)
+    if nome and (not f.get("nome") or (f.get("nome_auto") and not auto)):
+        f["nome"], f["nome_auto"] = nome, auto
+    if url and not f.get("url"):
+        f["url"], f["site"] = url, _site(url)
+    for campo in ("encontrado", "baixado", "traduzido"):
+        n = _num(v.get(campo))
+        if n is not None:
+            f[campo] = _maior(_num(f.get(campo)), n)
+    c = f.setdefault("conhecidos", {})
+    for n in _de_faixas(v.get("conhecidos")):
+        if n not in c and len(c) < MAX_CONHECIDOS:
+            c[n] = ""
+    tl, lido = _t(v.get("t_lido")), _num(v.get("lido"))
+    if lido is not None and tl > f.get("t_lido", 0):
+        f["lido"], f["t_lido"] = lido, tl
+        p = v.get("pos") if isinstance(v.get("pos"), dict) else {}
+        if _num(p.get("n")) == lido and _pos(p.get("p"), p.get("t"), p.get("f"), tl):
+            f["pos"] = {"n": lido, "p": int(p["p"]), "t": int(p["t"]), "f": round(float(p["f"]), 3)}
+        else:
+            f.pop("pos", None)
+    for campo in ("t_descoberta", "t_atualizado"):
+        if _t(v.get(campo)) > f.get(campo, 0):
+            f[campo] = _t(v.get(campo))
+    ts = _t(v.get("t_situacao"))
+    if v.get("situacao") in SITUACOES and ts > f.get("t_situacao", 0):
+        f["situacao"], f["t_situacao"] = v["situacao"], ts
+    return novo or json.dumps(f, sort_keys=True) != antes

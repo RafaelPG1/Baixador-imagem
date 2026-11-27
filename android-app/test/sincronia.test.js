@@ -40,3 +40,35 @@ test('estado inválido é recusado', () => {
   const h = S.criar(mem()); h.definirEstado('O', 'lixo'); assert.equal(h.estadoDaObra('O'), '');
   h.definirEstado('O', 'lendo'); assert.equal(h.estadoDaObra('O'), 'lendo');
 });
+
+test('fichas das obras: cópia mais nova entra, velha não sobrescreve, nada some', () => {
+  const h = S.criar(mem());
+  h.gravar({ posicoes: {}, lidos: {}, estados: {}, obras: { a: { nome: 'A', baixado: '5', t_atualizado: 2000 } } });
+  h.mesclar({ obras: { a: { nome: 'A', baixado: '1', t_atualizado: 1000 }, b: { nome: 'B', t_atualizado: 10 }, c: 'lixo' } });
+  const o = h.ler().obras;
+  assert.equal(o.a.baixado, '5');                  // a velha do notebook não sobrescreve
+  assert.equal(o.b.nome, 'B');                     // obra nova (inclusive removida da biblioteca) entra
+  assert.equal(o.c, undefined);
+  h.mesclar({ obras: { a: { nome: 'A', baixado: '9', t_atualizado: 3000 } } });
+  assert.equal(h.ler().obras.a.baixado, '9');
+  assert.equal(h.payload().obras.b.nome, 'B');     // e o que o aparelho tem volta no envio
+});
+
+test('indicador: sincronizando → sincronizado; falha → aguardando; resposta quebrada não grava', async () => {
+  const st = mem(), h = S.criar(st), vistos = [];
+  h.aoMudarEstado((e) => vistos.push(e));
+  await h.sincronizar(async () => ({ posicoes: {}, lidos: {}, estados: {}, obras: {} }), true);
+  assert.deepEqual(vistos, ['aguardando', 'sincronizando', 'sincronizado']);
+  const antes = st.getItem('baixador.hist');
+  await assert.rejects(h.sincronizar(async () => { throw new Error('sem rede'); }, true));
+  await assert.rejects(h.sincronizar(async () => 'texto cortado', true));
+  assert.equal(vistos.at(-1), 'aguardando');
+  assert.equal(st.getItem('baixador.hist'), antes);  // tentativa interrompida não corrompe
+});
+
+test('sincronizações simultâneas viram uma só (sem duplicar envio)', async () => {
+  const h = S.criar(mem()); let envios = 0;
+  const enviar = async () => { envios++; await new Promise((r) => setTimeout(r, 20)); return { posicoes: {}, lidos: {}, estados: {}, obras: {} }; };
+  await Promise.all([h.sincronizar(enviar, true), h.sincronizar(enviar, true), h.sincronizar(enviar, true)]);
+  assert.equal(envios, 1);
+});

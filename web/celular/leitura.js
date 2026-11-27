@@ -10,10 +10,8 @@ function aviso(t) { const x = $('toast'); x.textContent = t; x.hidden = false; c
 
 const H = Sincronia.criar(localStorage);                       // histórico local (posição, lido, estado da obra), sincronizado com o notebook
 const enviarSync = (corpo) => fetch('/api/app/sincronia', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(corpo)}).then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))));
-async function sincronizar(forcar) {
-  const antes = JSON.stringify(H.ler());
-  try { if (await H.sincronizar(enviarSync, forcar) && JSON.stringify(H.ler()) !== antes) desenhar(); } catch (_) { /* sem rede: o histórico local segue valendo e vai na próxima */ }
-}
+const sincronizar = H.automatico(enviarSync, () => { if (dados.versao) desenhar(); });   // sem botões: ao abrir, ao voltar à página, ao reconectar e a cada 20 s
+H.aoMudarEstado((e) => { const x = $('sync-hist'); if (x) x.textContent = Sincronia.TEXTO_ESTADO[e]; });
 const urlCapa = (o) => `/api/capa?p=${encodeURIComponent(o.pasta)}&v=${o.capa_v}`;
 function urlDaObra(nome) { return nome ? '/?obra=' + encodeURIComponent(nome) : '/'; }
 function abrirObra(nome) { obraAberta = nome; filtroCap = ''; history.pushState(null, '', urlDaObra(nome)); desenhar(); window.scrollTo(0, 0); }
@@ -172,7 +170,7 @@ async function vigiar() {
   }
   setTimeout(vigiar, 3000);
 }
-document.addEventListener('visibilitychange', () => { if (!document.hidden) { vigiar_agora(); sincronizar(); } });
+document.addEventListener('visibilitychange', () => { if (!document.hidden) vigiar_agora(); });
 function vigiar_agora() { fetch('/api/versao', {cache: 'no-store'}).then((r) => r.json()).then((j) => { if (j.versao !== dados.versao) carregar(); chip('Atualizado', 'ok'); }).catch(() => chip('Sem conexão com o notebook', 'erro')); }
-window.addEventListener('pageshow', () => { desenhar(); sincronizar(); });
-carregar().catch(() => {}).finally(() => { vigiar(); sincronizar(true); });
+window.addEventListener('pageshow', () => { desenhar(); });
+carregar().catch(() => {}).finally(() => { vigiar(); });
